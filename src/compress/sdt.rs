@@ -54,7 +54,8 @@ pub enum SdtMode {
 }
 
 impl SdtMode {
-    fn code(self) -> u8 {
+    /// Compact wire code.
+    pub fn code(self) -> u8 {
         match self {
             SdtMode::Strict => 0,
             SdtMode::Classic => 1,
@@ -62,7 +63,8 @@ impl SdtMode {
         }
     }
 
-    fn from_code(c: u8) -> Option<SdtMode> {
+    /// Inverse of [`SdtMode::code`].
+    pub fn from_code(c: u8) -> Option<SdtMode> {
         match c {
             0 => Some(SdtMode::Strict),
             1 => Some(SdtMode::Classic),
@@ -141,15 +143,15 @@ impl Sdt {
         self.cfg
     }
 
-    /// Replace the settings. A mode change is applied once the open segment closes, so a
-    /// recovered compressor never mixes state from two modes.
-    pub fn set_config(&mut self, cfg: SdtConfig) {
-        if cfg.mode == self.cfg.mode || (self.held.is_none() && self.buf.is_empty()) {
-            self.cfg = cfg;
-        } else {
-            self.cfg.dev = cfg.dev;
-            self.cfg.max_ms = cfg.max_ms;
+    /// Replace the settings. Deviation and max-time changes apply to subsequent points; a mode
+    /// change first archives the open segment (returned) so states of two modes never mix.
+    pub fn set_config(&mut self, cfg: SdtConfig) -> Vec<Point> {
+        let mut out = Vec::new();
+        if cfg.mode != self.cfg.mode {
+            self.close(&mut out);
         }
+        self.cfg = cfg;
+        out
     }
 
     /// Value kind of the tag.
@@ -660,7 +662,7 @@ mod tests {
         let mut s = Sdt::new(strict(1.0), ValueKind::Analog);
         assert!(s.anchor().is_none());
         assert_eq!(s.kind(), ValueKind::Analog);
-        s.set_config(strict(2.0));
+        assert!(s.set_config(strict(2.0)).is_empty());
         assert_eq!(s.config().dev, 2.0);
         let mut out = Vec::new();
         s.offer(Point::good(0, 1.0), &mut out);
@@ -669,5 +671,10 @@ mod tests {
         assert_eq!(s.snapshot().unwrap().ts, 1);
         assert_eq!(s.flush().last().unwrap().ts, 1);
         assert!(s.flush().is_empty());
+        // Switching mode with an open segment archives it first.
+        s.offer(Point::good(2, 1.7), &mut out);
+        let closed = s.set_config(lookback(2.0));
+        assert_eq!(closed.iter().map(|p| p.ts).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(s.config().mode, SdtMode::Lookback);
     }
 }

@@ -234,3 +234,44 @@ fn second_open_of_the_same_directory_is_refused() {
     drop(a);
     Archive::open(dir.path(), opts(100)).unwrap();
 }
+
+#[test]
+fn policy_changes_apply_on_open_but_read_only_opens_keep_settings() {
+    let dir = common::tempdir();
+    let mut a = Archive::open(dir.path(), opts(1000)).unwrap();
+    write_all(&mut a, 0..200);
+    drop(a); // crash: the WAL holds TagDefs with the settings they were created with
+    let ro = ArchiveOptions {
+        reconfigure_existing: false,
+        policy: Policy::uniform(0.0, 9.0),
+        ..opts(1000)
+    };
+    let a = Archive::open(dir.path(), ro).unwrap();
+    assert!(
+        a.tags().iter().all(|t| t.comp_dev == 0.05),
+        "read-only open keeps logged settings"
+    );
+    assert_eq!(a.stats().flushes_since_open, 0);
+    drop(a);
+    let changed = ArchiveOptions {
+        policy: Policy::uniform(0.0, 9.0),
+        ..opts(1000)
+    };
+    let a = Archive::open(dir.path(), changed).unwrap();
+    assert!(a.tags().iter().all(|t| t.comp_dev == 9.0));
+    assert_eq!(
+        a.stats().flushes_since_open,
+        1,
+        "a settings change is checkpointed immediately"
+    );
+    drop(a);
+    let a = Archive::open(
+        dir.path(),
+        ArchiveOptions {
+            reconfigure_existing: false,
+            ..opts(1000)
+        },
+    )
+    .unwrap();
+    assert!(a.tags().iter().all(|t| t.comp_dev == 9.0));
+}

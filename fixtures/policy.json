@@ -1,0 +1,11 @@
+{
+  "defaults": { "exc_dev": 0.0, "comp_dev": 0.0, "exc_max_ms": 600000, "comp_max_ms": 3600000 },
+  "rules": [
+    { "pattern": "*/Tank01/Level",         "exc_dev": 0.1,  "comp_dev": 0.2 },
+    { "pattern": "*/Tank01/InletFlow",     "exc_dev": 0.4,  "comp_dev": 0.8 },
+    { "pattern": "*/Reactor01/Temperature", "exc_dev": 0.15, "comp_dev": 0.3 },
+    { "pattern": "*/Reactor01/Pressure",   "exc_dev": 0.01, "comp_dev": 0.02 },
+    { "pattern": "*/Reactor01/CoolantFlow", "exc_dev": 0.4,  "comp_dev": 0.8 },
+    { "pattern": "*/Uptime",               "exc_dev": 0.0,  "comp_dev": 0.5 }
+  ]
+}

@@ -17,7 +17,7 @@ use tagvault::query;
 use tagvault::sim::capture::{read_capture, write_capture};
 use tagvault::sim::Scenario;
 use tagvault::sparkplug::{Host, HostConfig, HostEvent};
-use tagvault::storage::{Archive, ArchiveOptions};
+use tagvault::storage::{Archive, ArchiveOptions, SyncMode};
 use tagvault::timefmt::{format_time, now_ms, parse_duration, parse_time};
 use tagvault::{Error, Result};
 
@@ -128,6 +128,27 @@ struct IngestArgs {
     /// Print Sparkplug session events (gaps, rebirths, births, deaths).
     #[arg(long)]
     events: bool,
+    /// fsync policy for spool and WAL. An offline replay can always be re-run from the
+    /// capture, so the default skips fsync; use `always` to measure the durable path.
+    #[arg(long, value_enum, default_value = "os")]
+    sync: SyncArg,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SyncArg {
+    /// fsync every commit (power-loss safe).
+    Always,
+    /// Let the OS flush (process-crash safe).
+    Os,
+}
+
+impl SyncArg {
+    fn mode(self) -> SyncMode {
+        match self {
+            SyncArg::Always => SyncMode::Always,
+            SyncArg::Os => SyncMode::Os,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -265,32 +286,60 @@ fn default_spool(data: &Path, explicit: &Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(|| data.parent().unwrap_or(Path::new(".")).join("spool"))
 }
 
-fn print_events(events: &[HostEvent]) {
+/// Print up to `per_kind` events of each kind, then a count of the rest.
+fn print_events(events: &[HostEvent], per_kind: usize) {
+    let mut shown: std::collections::HashMap<&'static str, usize> =
+        std::collections::HashMap::new();
+    let mut hidden = 0usize;
     for e in events {
-        match e {
-            HostEvent::Discarded { .. } => {}
+        let (kind, line) = match e {
+            HostEvent::Discarded { .. }
+            | HostEvent::DeviceBirth { .. }
+            | HostEvent::DeviceDeath { .. } => continue,
             HostEvent::NodeBirth {
                 node,
                 bd_seq,
                 metrics,
-            } => println!(
-                "  [birth]   {node} bdSeq={} metrics={metrics}",
-                bd_seq.unwrap_or(0)
+            } => (
+                "birth",
+                format!(
+                    "[birth]   {node} bdSeq={} metrics={metrics}",
+                    bd_seq.unwrap_or(0)
+                ),
             ),
-            HostEvent::NodeDeath { node } => println!("  [death]   {node} → all tags marked stale"),
-            HostEvent::DeviceBirth { .. } | HostEvent::DeviceDeath { .. } => {}
+            HostEvent::NodeDeath { node } => (
+                "death",
+                format!("[death]   {node} → all its tags marked stale"),
+            ),
             HostEvent::SequenceGap {
                 node,
                 expected,
                 got,
-            } => println!("  [gap]     {node} expected seq {expected}, got {got} → buffering"),
-            HostEvent::GapRecovered { node, messages } => println!(
-                "  [reorder] {node} gap filled, {messages} buffered message(s) applied in order"
+            } => (
+                "gap",
+                format!("[gap]     {node} expected seq {expected}, got {got} → buffering"),
             ),
-            HostEvent::RebirthRequested { node, reason } => {
-                println!("  [rebirth] NCMD Node Control/Rebirth → {node} ({reason})")
-            }
+            HostEvent::GapRecovered { node, messages } => (
+                "reorder",
+                format!(
+                    "[reorder] {node} gap filled, {messages} buffered message(s) applied in order"
+                ),
+            ),
+            HostEvent::RebirthRequested { node, reason } => (
+                "rebirth",
+                format!("[rebirth] NCMD Node Control/Rebirth → {node} ({reason})"),
+            ),
+        };
+        let n = shown.entry(kind).or_default();
+        if *n < per_kind {
+            println!("  {line}");
+        } else {
+            hidden += 1;
         }
+        *n += 1;
+    }
+    if hidden > 0 {
+        println!("  … {hidden} more session events (see the counters below)");
     }
 }
 
@@ -353,8 +402,19 @@ fn parse_outages(specs: &[String], origin: i64) -> Result<Vec<(i64, i64)>> {
         .collect()
 }
 
-fn make_collector(policy: &Policy, spool_dir: &Path, host: HostConfig) -> Result<Collector> {
-    let spool = Spool::open(spool_dir, SpoolOptions::default())?;
+fn make_collector(
+    policy: &Policy,
+    spool_dir: &Path,
+    host: HostConfig,
+    sync: SyncMode,
+) -> Result<Collector> {
+    let spool = Spool::open(
+        spool_dir,
+        SpoolOptions {
+            sync,
+            ..Default::default()
+        },
+    )?;
     Ok(Collector::new(
         Host::new(host),
         policy.clone(),
@@ -369,7 +429,7 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
     let origin = frames.first().map(|f| f.recv_ts).unwrap_or(0);
     let outages = parse_outages(&a.outage, origin)?;
     let spool_dir = default_spool(&a.data, &a.spool);
-    let mut collector = make_collector(&policy, &spool_dir, HostConfig::default())?;
+    let mut collector = make_collector(&policy, &spool_dir, HostConfig::default(), a.sync.mode())?;
     collector.keep_events(a.events);
     println!(
         "replaying {} frames from {}",
@@ -386,7 +446,13 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
             (replay(&frames, &mut collector, &mut sink, 1000)?, None)
         }
         None => {
-            let mut archive = Archive::open(&a.data, archive_opts(policy.clone()))?;
+            let mut archive = Archive::open(
+                &a.data,
+                ArchiveOptions {
+                    sync: a.sync.mode(),
+                    ..archive_opts(policy.clone())
+                },
+            )?;
             let (r, rej) = {
                 let mut sink = OutageSink::new(ArchiveSink::new(&mut archive), outages);
                 let r = replay(&frames, &mut collector, &mut sink, 1000)?;
@@ -398,7 +464,7 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
     };
     let elapsed = t0.elapsed().as_secs_f64();
     if a.events {
-        print_events(&collector.take_events());
+        print_events(&collector.take_events(), 3);
     }
     let hs = collector.host_stats();
     let cs = collector.stats();
@@ -416,7 +482,7 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
         fs.enqueued, fs.delivered, fs.failed_attempts, report.max_backlog, report.left_in_spool
     );
     if let Some(rej) = rejected {
-        let archive = Archive::open(&a.data, archive_opts(policy))?;
+        let archive = Archive::open(&a.data, read_only())?;
         let st = archive.stats();
         let archived = st.segment_points + st.memtable_points;
         println!(
@@ -439,7 +505,7 @@ fn cmd_mqtt(a: MqttArgs) -> Result<()> {
         host_id: a.host_id.clone(),
         ..Default::default()
     };
-    let mut collector = make_collector(&policy, &spool_dir, host_cfg)?;
+    let mut collector = make_collector(&policy, &spool_dir, host_cfg, SyncMode::Always)?;
     let password =
         match &a.password_env {
             Some(var) => Some(std::env::var(var).map_err(|_| {
@@ -523,8 +589,16 @@ fn cmd_serve(a: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+/// Options for tools that only read: never rewrite stored settings.
+fn read_only() -> ArchiveOptions {
+    ArchiveOptions {
+        reconfigure_existing: false,
+        ..Default::default()
+    }
+}
+
 fn cmd_tags(a: DataArgs) -> Result<()> {
-    let archive = Archive::open(&a.data, ArchiveOptions::default())?;
+    let archive = Archive::open(&a.data, read_only())?;
     let tags = archive.tags();
     if a.json {
         println!(
@@ -554,7 +628,7 @@ fn cmd_tags(a: DataArgs) -> Result<()> {
 }
 
 fn cmd_query(a: QueryArgs) -> Result<()> {
-    let archive = Archive::open(&a.data, ArchiveOptions::default())?;
+    let archive = Archive::open(&a.data, read_only())?;
     let now = now_ms();
     let (start, end) = (parse_time(&a.start, now)?, parse_time(&a.end, now)?);
     let series = archive.series(&a.tag, start, end)?;
@@ -650,7 +724,7 @@ fn cmd_query(a: QueryArgs) -> Result<()> {
 }
 
 fn cmd_verify(a: DataArgs) -> Result<()> {
-    let archive = Archive::open(&a.data, ArchiveOptions::default())?;
+    let archive = Archive::open(&a.data, read_only())?;
     let checked = archive.verify()?;
     let rec = archive.recovery().clone();
     let st = archive.stats();

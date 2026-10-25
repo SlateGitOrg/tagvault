@@ -39,6 +39,9 @@ pub struct ArchiveOptions {
     pub wal_max_bytes: u64,
     /// Compression policy per tag.
     pub policy: Policy,
+    /// Apply `policy` to existing tags on open (a changed setting triggers a checkpoint).
+    /// Read-only tools set this to `false` so they never alter stored settings.
+    pub reconfigure_existing: bool,
 }
 
 impl Default for ArchiveOptions {
@@ -48,6 +51,7 @@ impl Default for ArchiveOptions {
             flush_points: 50_000,
             wal_max_bytes: 32 << 20,
             policy: Policy::default(),
+            reconfigure_existing: true,
         }
     }
 }
@@ -241,9 +245,13 @@ impl Archive {
                 WalRecord::Checkpoint(_) => {
                     return Err(Error::Corrupt("checkpoint in WAL body".into()))
                 }
-                WalRecord::TagDef { id, name, kind } => {
-                    let sdt = Sdt::new(archive.opts.policy.resolve(&name).compression, kind);
-                    archive.install_tag(id, name, sdt, None)?;
+                WalRecord::TagDef {
+                    id,
+                    name,
+                    kind,
+                    config,
+                } => {
+                    archive.install_tag(id, name, Sdt::new(config, kind), None)?;
                 }
                 WalRecord::Points(pts) => {
                     recovery.replayed_points += pts.len();
@@ -253,6 +261,9 @@ impl Archive {
         }
         archive.recovery = recovery;
         archive.stats.accepted_since_open = 0;
+        if archive.opts.reconfigure_existing {
+            archive.apply_policy()?;
+        }
         if archive.recovery != RecoveryReport::default() {
             log::info!(
                 "archive {} recovered: {:?}",
@@ -267,14 +278,12 @@ impl Archive {
         &mut self,
         id: TagId,
         name: String,
-        mut sdt: Sdt,
+        sdt: Sdt,
         last_ts: Option<Timestamp>,
     ) -> Result<()> {
         if id as usize != self.tags.len() || self.by_name.contains_key(&name) {
             return Err(Error::Corrupt(format!("tag {id} ({name}) out of sequence")));
         }
-        // The policy file is the source of truth for settings; door state carries over.
-        sdt.set_config(self.opts.policy.resolve(&name).compression);
         self.by_name.insert(name.clone(), id);
         self.tags.push(TagState {
             id,
@@ -284,6 +293,26 @@ impl Archive {
             mem: Vec::new(),
             chunks: Vec::new(),
         });
+        Ok(())
+    }
+
+    /// Bring every tag's settings in line with the policy; checkpoint if anything changed so
+    /// that a later recovery replays the WAL under the settings it was written with.
+    fn apply_policy(&mut self) -> Result<()> {
+        let mut changed = false;
+        for t in &mut self.tags {
+            let want = self.opts.policy.resolve(&t.name).compression;
+            if t.sdt.config() != want {
+                let closed = t.sdt.set_config(want);
+                self.mem_points += closed.len();
+                t.mem.extend(closed);
+                changed = true;
+            }
+        }
+        if changed {
+            log::info!("policy changed settings of existing tags; writing a checkpoint");
+            self.flush()?;
+        }
         Ok(())
     }
 
@@ -324,12 +353,14 @@ impl Archive {
                 None => {
                     let id = TagId::try_from(self.tags.len())
                         .map_err(|_| Error::InvalidInput("too many tags".into()))?;
+                    let config = self.opts.policy.resolve(&s.tag).compression;
                     self.wal.append(&WalRecord::TagDef {
                         id,
                         name: s.tag.clone(),
                         kind: s.kind,
+                        config,
                     });
-                    let sdt = Sdt::new(self.opts.policy.resolve(&s.tag).compression, s.kind);
+                    let sdt = Sdt::new(config, s.kind);
                     self.install_tag(id, s.tag.clone(), sdt, None)?;
                     new_tags += 1;
                     id

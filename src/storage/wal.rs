@@ -12,7 +12,7 @@
 
 use super::frame;
 use super::sync_dir;
-use crate::compress::sdt::Sdt;
+use crate::compress::sdt::{Sdt, SdtConfig, SdtMode};
 use crate::encoding::varint::{put_str, put_uvarint, Cursor};
 use crate::error::{Error, Result};
 use crate::types::{Point, Quality, TagId, Timestamp, ValueKind};
@@ -65,6 +65,8 @@ pub enum WalRecord {
         name: String,
         /// Interpolation kind.
         kind: ValueKind,
+        /// Compression settings the tag was created with.
+        config: SdtConfig,
     },
     /// A batch of accepted raw points.
     Points(Vec<(TagId, Point)>),
@@ -95,11 +97,19 @@ impl WalRecord {
                     }
                 }
             }
-            WalRecord::TagDef { id, name, kind } => {
+            WalRecord::TagDef {
+                id,
+                name,
+                kind,
+                config,
+            } => {
                 out.push(REC_TAGDEF);
                 put_uvarint(out, *id as u64);
                 put_str(out, name);
                 out.push(kind.code());
+                out.extend_from_slice(&config.dev.to_le_bytes());
+                out.extend_from_slice(&config.max_ms.unwrap_or(-1).to_le_bytes());
+                out.push(config.mode.code());
             }
             WalRecord::Points(pts) => {
                 out.push(REC_POINTS);
@@ -141,7 +151,21 @@ impl WalRecord {
                 let name = c.string()?;
                 let kind = ValueKind::from_code(c.u8()?)
                     .ok_or_else(|| Error::Corrupt("bad value kind".into()))?;
-                WalRecord::TagDef { id, name, kind }
+                let dev = c.f64()?;
+                let max = c.i64()?;
+                let mode = SdtMode::from_code(c.u8()?)
+                    .ok_or_else(|| Error::Corrupt("bad sdt mode".into()))?;
+                let config = SdtConfig {
+                    dev,
+                    max_ms: (max >= 0).then_some(max),
+                    mode,
+                };
+                WalRecord::TagDef {
+                    id,
+                    name,
+                    kind,
+                    config,
+                }
             }
             REC_POINTS => {
                 let n = c.uvarint()? as usize;
@@ -318,6 +342,11 @@ mod tests {
                 id: 1,
                 name: "c".into(),
                 kind: ValueKind::Discrete,
+                config: SdtConfig {
+                    dev: 0.5,
+                    max_ms: None,
+                    mode: SdtMode::Strict,
+                },
             },
             WalRecord::Points(vec![
                 (0, Point::good(5, 1.5)),
@@ -390,6 +419,7 @@ mod tests {
             id: 0,
             name: "x".into(),
             kind: ValueKind::Analog,
+            config: SdtConfig::default(),
         }
         .encode(&mut body);
         let mut framed = Vec::new();
