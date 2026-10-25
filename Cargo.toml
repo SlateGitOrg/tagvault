@@ -2,7 +2,7 @@
 name = "tagvault"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.82"
 description = "Industrial time-series historian: Sparkplug B ingest, swinging-door compression, Gorilla chunks, crash-safe WAL, store-and-forward, query engine"
 license = "MIT"
 readme = "README.md"

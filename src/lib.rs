@@ -18,9 +18,12 @@
 #![warn(missing_docs)]
 
 pub mod compress;
+pub mod config;
 pub mod encoding;
 pub mod error;
+pub mod query;
 pub mod sparkplug;
+pub mod storage;
 pub mod types;
 
 pub use error::{Error, Result};
