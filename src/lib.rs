@@ -17,12 +17,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod collector;
 pub mod compress;
 pub mod config;
 pub mod encoding;
 pub mod error;
 pub mod forward;
 pub mod query;
+pub mod sim;
 pub mod sparkplug;
 pub mod storage;
 pub mod types;
