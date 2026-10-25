@@ -1,6 +1,6 @@
 # tagvault compared with PI/AVEVA-style historians
 
-tagvault is a learning-scale implementation of the architecture that commercial process
+tagvault is a small-scale implementation of the architecture that commercial process
 historians popularised. The best-known of those is the OSIsoft PI System, now AVEVA PI. This
 page maps tagvault's components onto that publicly documented architecture and says plainly
 where tagvault is simpler.

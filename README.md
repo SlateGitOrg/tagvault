@@ -1,5 +1,7 @@
 # tagvault
 
+[![CI](https://github.com/SlateGitOrg/tagvault/actions/workflows/ci.yml/badge.svg)](https://github.com/SlateGitOrg/tagvault/actions/workflows/ci.yml)
+
 A process historian for plant telemetry, written in Rust. It ingests **MQTT Sparkplug B**,
 reduces data with an exception deadband and a **swinging-door compressor whose error bound is
 proven and property-tested**, and stores the result in **Gorilla-encoded columnar chunks**
@@ -11,8 +13,7 @@ a CLI and a small HTTP API.
 Sparkplug B edge ──MQTT──▶ host (aliases, seq, rebirth) ─▶ exception ─▶ spool ══link══▶ WAL ─▶ SDT ─▶ Gorilla segments ─▶ queries
 ```
 
-> Portfolio project. All data is simulated (see [DATA.md](DATA.md)). It has not been used in
-> production.
+> All data is simulated (see [DATA.md](DATA.md)). tagvault has not been used in production.
 
 ## Why
 
@@ -34,9 +35,8 @@ down the guarantees that commercial systems usually leave implicit:
   sequence-number gaps with a reorder window, `Node Control/Rebirth` requests, and `bdSeq`
   matching for late deaths.
 
-**Who it's for.** OT/IIoT engineers who want to see how a historian works inside, people
-evaluating SDT settings for their tags, and reviewers looking at systems code: storage engine,
-protocol state machine, codecs, and property tests.
+**Who it's for.** OT/IIoT engineers who want to see how a historian works inside, and people
+evaluating SDT settings for their tags.
 
 ## Features
 
@@ -86,7 +86,7 @@ complexity. [docs/SDT.md](docs/SDT.md) has the compression algorithms with proof
 [docs/HISTORIAN_COMPARISON.md](docs/HISTORIAN_COMPARISON.md) maps tagvault onto PI/AVEVA-style
 historians.
 
-## Quickstart
+## Quick start
 
 Requirements: Rust 1.89 or newer. For `make check` you also need `cargo-llvm-cov` (`cargo
 install cargo-llvm-cov`, plus `rustup component add llvm-tools-preview`).
@@ -337,8 +337,6 @@ Full list with costs: [DECISIONS.md](DECISIONS.md).
   3.0 examples but are not byte-for-byte copies of official vectors.
 * **Benchmark scale.** The benchmark covers 64 tags and 1.4 M points on one laptop. Nothing
   larger has been measured.
-* **CI not yet run.** `.github/workflows/ci.yml` mirrors `make check`, `make demo` and
-  `make integration`, but it has not run because the repository has not been pushed.
 
 ## Roadmap
 
