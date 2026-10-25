@@ -38,11 +38,7 @@ pub struct HostConfig {
 
 impl Default for HostConfig {
     fn default() -> Self {
-        HostConfig {
-            host_id: "tagvault".into(),
-            reorder_timeout_ms: 2_000,
-            rebirth_cooldown_ms: 5_000,
-        }
+        HostConfig { host_id: "tagvault".into(), reorder_timeout_ms: 2_000, rebirth_cooldown_ms: 5_000 }
     }
 }
 
@@ -225,15 +221,12 @@ impl NodeSession {
         if let Some(a) = alias {
             self.by_alias.insert(a, def.clone());
         }
-        self.by_name
-            .insert((def.device.clone(), def.name.clone()), def);
+        self.by_name.insert((def.device.clone(), def.name.clone()), def);
     }
 
     fn forget_device(&mut self, device: &str) {
-        self.by_alias
-            .retain(|_, d| d.device.as_deref() != Some(device));
-        self.by_name
-            .retain(|(d, _), _| d.as_deref() != Some(device));
+        self.by_alias.retain(|_, d| d.device.as_deref() != Some(device));
+        self.by_name.retain(|(d, _), _| d.as_deref() != Some(device));
     }
 }
 
@@ -243,14 +236,11 @@ fn is_control_metric(name: &str) -> bool {
 }
 
 fn bd_seq_of(p: &Payload) -> Option<u64> {
-    p.metrics
-        .iter()
-        .find(|m| m.name.as_deref() == Some("bdSeq"))
-        .and_then(|m| match m.value {
-            Some(metric::Value::LongValue(v)) => Some(v),
-            Some(metric::Value::IntValue(v)) => Some(v as u64),
-            _ => None,
-        })
+    p.metrics.iter().find(|m| m.name.as_deref() == Some("bdSeq")).and_then(|m| match m.value {
+        Some(metric::Value::LongValue(v)) => Some(v),
+        Some(metric::Value::IntValue(v)) => Some(v as u64),
+        _ => None,
+    })
 }
 
 /// Build the `NCMD` payload asking an edge node to republish its births.
@@ -266,10 +256,7 @@ pub fn rebirth_command(group: &str, edge: &str, now: Timestamp) -> Outbound {
         }],
         ..Default::default()
     };
-    Outbound {
-        topic: Topic::node(MessageType::NCmd, group, edge).to_string(),
-        payload: payload.encode_to_vec(),
-    }
+    Outbound { topic: Topic::node(MessageType::NCmd, group, edge).to_string(), payload: payload.encode_to_vec() }
 }
 
 /// The host application.
@@ -283,11 +270,7 @@ pub struct Host {
 impl Host {
     /// New host with the given settings.
     pub fn new(cfg: HostConfig) -> Self {
-        Host {
-            cfg,
-            sessions: HashMap::new(),
-            stats: HostStats::default(),
-        }
+        Host { cfg, sessions: HashMap::new(), stats: HostStats::default() }
     }
 
     /// Counters so far.
@@ -302,9 +285,7 @@ impl Host {
 
     /// `Some(true)` if the node has a live session, `Some(false)` if known but offline.
     pub fn node_online(&self, group: &str, edge: &str) -> Option<bool> {
-        self.sessions
-            .get(&(group.to_string(), edge.to_string()))
-            .map(|s| s.online && !s.awaiting_rebirth)
+        self.sessions.get(&(group.to_string(), edge.to_string())).map(|s| s.online && !s.awaiting_rebirth)
     }
 
     /// Handle one MQTT message received at `now` (ms since epoch, host clock).
@@ -355,28 +336,16 @@ impl Host {
     fn discard(&mut self, out: &mut HostOutput, topic: &str, reason: &str) {
         self.stats.discarded += 1;
         log::debug!("discarding message on {topic}: {reason}");
-        out.events.push(HostEvent::Discarded {
-            topic: topic.to_string(),
-            reason: reason.to_string(),
-        });
+        out.events.push(HostEvent::Discarded { topic: topic.to_string(), reason: reason.to_string() });
     }
 
-    fn request_rebirth(
-        &mut self,
-        key: &(String, String),
-        reason: RebirthReason,
-        now: Timestamp,
-        out: &mut HostOutput,
-    ) {
+    fn request_rebirth(&mut self, key: &(String, String), reason: RebirthReason, now: Timestamp, out: &mut HostOutput) {
         let cooldown = self.cfg.rebirth_cooldown_ms;
         let sess = self.sessions.entry(key.clone()).or_default();
         sess.awaiting_rebirth = true;
         sess.reorder.clear();
         sess.gap_since = None;
-        if sess
-            .last_rebirth_request
-            .is_some_and(|t| now - t < cooldown)
-        {
+        if sess.last_rebirth_request.is_some_and(|t| now - t < cooldown) {
             return;
         }
         sess.last_rebirth_request = Some(now);
@@ -384,8 +353,7 @@ impl Host {
         let node = format!("{}/{}", key.0, key.1);
         log::info!("requesting rebirth from {node}: {reason}");
         out.commands.push(rebirth_command(&key.0, &key.1, now));
-        out.events
-            .push(HostEvent::RebirthRequested { node, reason });
+        out.events.push(HostEvent::RebirthRequested { node, reason });
     }
 
     fn on_nbirth(&mut self, topic: Topic, payload: Payload, now: Timestamp, out: &mut HostOutput) {
@@ -439,11 +407,7 @@ impl Host {
         if let (Some(have), Some(got)) = (sess.bd_seq, death_bd) {
             if have != got {
                 self.stats.stale_deaths_ignored += 1;
-                self.discard(
-                    out,
-                    &topic.to_string(),
-                    &format!("NDEATH bdSeq {got} != session bdSeq {have}"),
-                );
+                self.discard(out, &topic.to_string(), &format!("NDEATH bdSeq {got} != session bdSeq {have}"));
                 return;
             }
         }
@@ -463,23 +427,12 @@ impl Host {
         }
         self.stats.samples += out.samples.len() as u64;
         self.stats.deaths += 1;
-        out.events.push(HostEvent::NodeDeath {
-            node: format!("{}/{}", topic.group, topic.edge),
-        });
+        out.events.push(HostEvent::NodeDeath { node: format!("{}/{}", topic.group, topic.edge) });
     }
 
-    fn on_sequenced(
-        &mut self,
-        topic: Topic,
-        payload: Payload,
-        now: Timestamp,
-        out: &mut HostOutput,
-    ) {
+    fn on_sequenced(&mut self, topic: Topic, payload: Payload, now: Timestamp, out: &mut HostOutput) {
         let key = (topic.group.clone(), topic.edge.clone());
-        let live = self
-            .sessions
-            .get(&key)
-            .is_some_and(|s| s.online && !s.awaiting_rebirth);
+        let live = self.sessions.get(&key).is_some_and(|s| s.online && !s.awaiting_rebirth);
         if !live {
             self.discard(out, &topic.to_string(), "no live session");
             self.request_rebirth(&key, RebirthReason::NoSession, now, out);
@@ -514,10 +467,7 @@ impl Host {
             let sess = self.sessions.get_mut(&key).expect("session exists");
             if drained > 0 {
                 self.stats.reordered += drained as u64;
-                out.events.push(HostEvent::GapRecovered {
-                    node: format!("{}/{}", key.0, key.1),
-                    messages: drained,
-                });
+                out.events.push(HostEvent::GapRecovered { node: format!("{}/{}", key.0, key.1), messages: drained });
             }
             if sess.reorder.is_empty() {
                 sess.gap_since = None;
@@ -534,21 +484,12 @@ impl Host {
             sess.gap_since.get_or_insert(now);
             sess.reorder.insert(seq, (topic, payload));
         } else {
-            self.discard(
-                out,
-                &topic.to_string(),
-                &format!("duplicate or stale seq {seq}"),
-            );
+            self.discard(out, &topic.to_string(), &format!("duplicate or stale seq {seq}"));
         }
         self.check_reorder_timeout(&key, now, out);
     }
 
-    fn check_reorder_timeout(
-        &mut self,
-        key: &(String, String),
-        now: Timestamp,
-        out: &mut HostOutput,
-    ) {
+    fn check_reorder_timeout(&mut self, key: &(String, String), now: Timestamp, out: &mut HostOutput) {
         let timeout = self.cfg.reorder_timeout_ms;
         let Some(sess) = self.sessions.get_mut(key) else {
             return;
@@ -592,11 +533,7 @@ impl Host {
                 }
                 sess.devices.insert(device.clone(), true);
                 self.stats.births += 1;
-                out.events.push(HostEvent::DeviceBirth {
-                    node,
-                    device,
-                    metrics: payload.metrics.len(),
-                });
+                out.events.push(HostEvent::DeviceBirth { node, device, metrics: payload.metrics.len() });
             }
             MessageType::DDeath => {
                 let device = topic.device.clone().unwrap_or_default();
@@ -605,15 +542,11 @@ impl Host {
                 }
                 sess.devices.insert(device.clone(), false);
                 let ts = payload_ts.map(|t| t as i64).unwrap_or(now);
-                let mut defs: Vec<&MetricDef> = sess
-                    .by_name
-                    .values()
-                    .filter(|d| d.device.as_deref() == Some(device.as_str()))
-                    .collect();
+                let mut defs: Vec<&MetricDef> =
+                    sess.by_name.values().filter(|d| d.device.as_deref() == Some(device.as_str())).collect();
                 defs.sort_by(|a, b| a.name.cmp(&b.name));
                 let before = out.samples.len();
-                out.samples
-                    .extend(defs.into_iter().filter_map(|d| stale_sample(&topic, d, ts)));
+                out.samples.extend(defs.into_iter().filter_map(|d| stale_sample(&topic, d, ts)));
                 self.stats.samples += (out.samples.len() - before) as u64;
                 self.stats.deaths += 1;
                 out.events.push(HostEvent::DeviceDeath { node, device });
@@ -629,10 +562,7 @@ impl Host {
                 let mut resolved = Vec::with_capacity(payload.metrics.len());
                 for m in &payload.metrics {
                     let def = match (m.alias, &m.name) {
-                        (Some(a), _) => sess
-                            .by_alias
-                            .get(&a)
-                            .ok_or(RebirthReason::UnknownAlias(a))?,
+                        (Some(a), _) => sess.by_alias.get(&a).ok_or(RebirthReason::UnknownAlias(a))?,
                         (None, Some(n)) => sess
                             .by_name
                             .get(&(topic.device.clone(), n.clone()))
@@ -669,11 +599,7 @@ fn stale_sample(topic: &Topic, def: &MetricDef, ts: Timestamp) -> Option<Sample>
         return None;
     }
     let kind = def.datatype.value_kind()?;
-    Some(Sample {
-        tag: tag_name(topic, def),
-        kind,
-        point: Point::with_quality(ts, f64::NAN, Quality::Stale),
-    })
+    Some(Sample { tag: tag_name(topic, def), kind, point: Point::with_quality(ts, f64::NAN, Quality::Stale) })
 }
 
 /// Convert one metric into a historizable sample, or `None` if it should not be stored.
@@ -713,9 +639,5 @@ fn sample_for(
         Point::with_quality(ts, v, quality)
     };
     stats.samples += 1;
-    Some(Sample {
-        tag: tag_name(topic, def),
-        kind,
-        point,
-    })
+    Some(Sample { tag: tag_name(topic, def), kind, point })
 }

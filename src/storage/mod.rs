@@ -12,9 +12,7 @@ pub mod frame;
 pub mod segment;
 pub mod wal;
 
-pub use archive::{
-    Archive, ArchiveOptions, ArchiveStats, RecoveryReport, Series, TagInfo, WriteReport,
-};
+pub use archive::{Archive, ArchiveOptions, ArchiveStats, RecoveryReport, Series, TagInfo, WriteReport};
 pub use wal::SyncMode;
 
 use std::fs::File;
@@ -22,17 +20,12 @@ use std::path::Path;
 
 /// Take an exclusive advisory lock on `<dir>/LOCK`, held for as long as the returned file lives.
 pub(crate) fn lock_dir(dir: &Path) -> crate::error::Result<File> {
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join("LOCK"))?;
+    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("LOCK"))?;
     match f.try_lock() {
         Ok(()) => Ok(f),
-        Err(std::fs::TryLockError::WouldBlock) => Err(crate::error::Error::InvalidInput(format!(
-            "{} is in use by another tagvault process",
-            dir.display()
-        ))),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            Err(crate::error::Error::InvalidInput(format!("{} is in use by another tagvault process", dir.display())))
+        }
         Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
     }
 }

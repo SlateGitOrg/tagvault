@@ -50,26 +50,18 @@ pub fn decode(buf: &[u8]) -> Result<Vec<Sample>> {
     let mut names = Vec::with_capacity(ntags.min(c.remaining()));
     for _ in 0..ntags {
         let name = c.string()?;
-        let kind =
-            ValueKind::from_code(c.u8()?).ok_or_else(|| Error::Decode("bad value kind".into()))?;
+        let kind = ValueKind::from_code(c.u8()?).ok_or_else(|| Error::Decode("bad value kind".into()))?;
         names.push((name, kind));
     }
     let npts = c.uvarint()? as usize;
     let mut out = Vec::with_capacity(npts.min(c.remaining() / 11));
     for _ in 0..npts {
         let idx = c.uvarint()? as usize;
-        let (name, kind) = names
-            .get(idx)
-            .ok_or_else(|| Error::Decode("tag index out of range".into()))?;
+        let (name, kind) = names.get(idx).ok_or_else(|| Error::Decode("tag index out of range".into()))?;
         let ts = c.ivarint()?;
         let value = c.f64()?;
-        let quality =
-            Quality::from_code(c.u8()?).ok_or_else(|| Error::Decode("bad quality".into()))?;
-        out.push(Sample {
-            tag: name.clone(),
-            kind: *kind,
-            point: Point { ts, value, quality },
-        });
+        let quality = Quality::from_code(c.u8()?).ok_or_else(|| Error::Decode("bad quality".into()))?;
+        out.push(Sample { tag: name.clone(), kind: *kind, point: Point { ts, value, quality } });
     }
     if c.remaining() != 0 {
         return Err(Error::Decode("trailing bytes after batch".into()));
@@ -84,21 +76,9 @@ mod tests {
     #[test]
     fn roundtrip_and_rejects_garbage() {
         let samples = vec![
-            Sample {
-                tag: "a/b".into(),
-                kind: ValueKind::Analog,
-                point: Point::good(-5, 1.25),
-            },
-            Sample {
-                tag: "c".into(),
-                kind: ValueKind::Discrete,
-                point: Point::with_quality(7, 0.0, Quality::Stale),
-            },
-            Sample {
-                tag: "a/b".into(),
-                kind: ValueKind::Analog,
-                point: Point::good(9, 2.5),
-            },
+            Sample { tag: "a/b".into(), kind: ValueKind::Analog, point: Point::good(-5, 1.25) },
+            Sample { tag: "c".into(), kind: ValueKind::Discrete, point: Point::with_quality(7, 0.0, Quality::Stale) },
+            Sample { tag: "a/b".into(), kind: ValueKind::Analog, point: Point::good(9, 2.5) },
         ];
         let enc = encode(&samples);
         assert_eq!(decode(&enc).unwrap(), samples);

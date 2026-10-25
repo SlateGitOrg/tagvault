@@ -77,10 +77,7 @@ impl<'a> BitReader<'a> {
 
     /// Read one bit.
     pub fn read_bit(&mut self) -> Result<bool> {
-        let byte = self
-            .buf
-            .get(self.pos / 8)
-            .ok_or_else(|| Error::Corrupt("bit stream exhausted".into()))?;
+        let byte = self.buf.get(self.pos / 8).ok_or_else(|| Error::Corrupt("bit stream exhausted".into()))?;
         let bit = (byte >> (7 - (self.pos % 8))) & 1 == 1;
         self.pos += 1;
         Ok(bit)
@@ -115,14 +112,7 @@ mod tests {
     #[test]
     fn roundtrip_mixed_widths() {
         let mut w = BitWriter::new();
-        let items: Vec<(u64, u32)> = vec![
-            (1, 1),
-            (0b101, 3),
-            (0xdead_beef, 32),
-            (u64::MAX, 64),
-            (0, 7),
-            (42, 9),
-        ];
+        let items: Vec<(u64, u32)> = vec![(1, 1), (0b101, 3), (0xdead_beef, 32), (u64::MAX, 64), (0, 7), (42, 9)];
         for &(v, n) in &items {
             w.write_bits(v, n);
         }

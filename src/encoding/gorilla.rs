@@ -41,11 +41,7 @@ pub fn encode_timestamps(ts: &[Timestamp]) -> Vec<u8> {
         return out;
     }
     put_ivarint(&mut out, ts[0]);
-    let unit = ts
-        .windows(2)
-        .map(|w| w[1].wrapping_sub(w[0]).unsigned_abs())
-        .fold(0u64, gcd)
-        .max(1);
+    let unit = ts.windows(2).map(|w| w[1].wrapping_sub(w[0]).unsigned_abs()).fold(0u64, gcd).max(1);
     put_uvarint(&mut out, unit);
     let mut w = BitWriter::new();
     let mut prev_delta: i64 = 0;
@@ -193,8 +189,7 @@ pub fn decode_values(buf: &[u8]) -> Result<Vec<f64>> {
             continue;
         }
         let xor = if !r.read_bit()? {
-            let (pl, plen) =
-                window.ok_or_else(|| Error::Corrupt("xor window reused before set".into()))?;
+            let (pl, plen) = window.ok_or_else(|| Error::Corrupt("xor window reused before set".into()))?;
             r.read_bits(plen)? << (64 - pl - plen)
         } else {
             let leading = r.read_bits(5)? as u32;
@@ -224,51 +219,19 @@ mod tests {
         let enc = encode_timestamps(&regular);
         assert_eq!(decode_timestamps(&enc).unwrap(), regular);
         // 999 zero dods → ~1 bit each.
-        assert!(
-            enc.len() < 150,
-            "regular series should be tiny, got {}",
-            enc.len()
-        );
+        assert!(enc.len() < 150, "regular series should be tiny, got {}", enc.len());
 
-        let irregular = vec![
-            -5,
-            0,
-            3,
-            3,
-            1_000_000,
-            1_000_007,
-            9_000_000_000,
-            i64::MAX / 2,
-        ];
-        assert_eq!(
-            decode_timestamps(&encode_timestamps(&irregular)).unwrap(),
-            irregular
-        );
-        assert_eq!(
-            decode_timestamps(&encode_timestamps(&[])).unwrap(),
-            Vec::<i64>::new()
-        );
-        assert_eq!(
-            decode_timestamps(&encode_timestamps(&[7])).unwrap(),
-            vec![7]
-        );
+        let irregular = vec![-5, 0, 3, 3, 1_000_000, 1_000_007, 9_000_000_000, i64::MAX / 2];
+        assert_eq!(decode_timestamps(&encode_timestamps(&irregular)).unwrap(), irregular);
+        assert_eq!(decode_timestamps(&encode_timestamps(&[])).unwrap(), Vec::<i64>::new());
+        assert_eq!(decode_timestamps(&encode_timestamps(&[7])).unwrap(), vec![7]);
     }
 
     #[test]
     fn timestamp_buckets_cover_boundaries() {
         let mut ts = vec![0i64, 1000];
         let mut delta = 1000i64;
-        for dod in [
-            64,
-            -63,
-            256,
-            -255,
-            2048,
-            -2047,
-            100_000,
-            -100_000,
-            1i64 << 40,
-        ] {
+        for dod in [64, -63, 256, -255, 2048, -2047, 100_000, -100_000, 1i64 << 40] {
             delta += dod;
             let last = *ts.last().unwrap();
             ts.push(last + delta);
@@ -278,19 +241,7 @@ mod tests {
 
     #[test]
     fn values_roundtrip_including_special_floats() {
-        let vals = vec![
-            12.5,
-            12.5,
-            12.75,
-            -3.0,
-            0.0,
-            -0.0,
-            f64::NAN,
-            f64::INFINITY,
-            1e-300,
-            1e300,
-            12.5,
-        ];
+        let vals = vec![12.5, 12.5, 12.75, -3.0, 0.0, -0.0, f64::NAN, f64::INFINITY, 1e-300, 1e300, 12.5];
         let dec = decode_values(&encode_values(&vals)).unwrap();
         assert_eq!(dec.len(), vals.len());
         for (a, b) in vals.iter().zip(&dec) {

@@ -21,12 +21,8 @@ pub enum SignalClass {
 
 impl SignalClass {
     /// All classes.
-    pub const ALL: [SignalClass; 4] = [
-        SignalClass::TankLevel,
-        SignalClass::Temperature,
-        SignalClass::Flow,
-        SignalClass::Pressure,
-    ];
+    pub const ALL: [SignalClass; 4] =
+        [SignalClass::TankLevel, SignalClass::Temperature, SignalClass::Flow, SignalClass::Pressure];
 
     /// Engineering range `(low, high)`.
     pub fn span(self) -> (f64, f64) {
@@ -78,14 +74,7 @@ impl Tank {
         let level = rng.range(35.0, 75.0);
         let pump_on = rng.chance(0.5);
         let demand = rng.range(15.0, 28.0);
-        Tank {
-            rng,
-            level,
-            pump_on,
-            demand,
-            capacity_m3: 20.0,
-            pump_rate: 42.0,
-        }
+        Tank { rng, level, pump_on, demand, capacity_m3: 20.0, pump_rate: 42.0 }
     }
 
     /// Advance `dt_s` seconds.
@@ -101,11 +90,7 @@ impl Tank {
         }
         TankReading {
             level: self.level + self.rng.normal() * 0.05,
-            inflow: if self.pump_on {
-                (inflow + self.rng.normal() * 0.3).max(0.0)
-            } else {
-                0.0
-            },
+            inflow: if self.pump_on { (inflow + self.rng.normal() * 0.3).max(0.0) } else { 0.0 },
             pump_on: self.pump_on,
         }
     }
@@ -137,14 +122,7 @@ impl FirstOrder {
         Self::build(seed, 8.0, 0.4, (20.0, 60.0), (300.0, 1200.0), 1.0 / 7200.0)
     }
 
-    fn build(
-        seed: u64,
-        tau_s: f64,
-        noise: f64,
-        sp_range: (f64, f64),
-        hold_s: (f64, f64),
-        trip: f64,
-    ) -> Self {
+    fn build(seed: u64, tau_s: f64, noise: f64, sp_range: (f64, f64), hold_s: (f64, f64), trip: f64) -> Self {
         let mut rng = Rng::new(seed);
         let sp = rng.range(sp_range.0, sp_range.1);
         let until_step = rng.range(hold_s.0, hold_s.1);
@@ -202,20 +180,12 @@ impl MeanReverting {
     pub fn pressure(seed: u64) -> Self {
         let mut rng = Rng::new(seed);
         let x = 5.0 + rng.normal() * 0.2;
-        MeanReverting {
-            rng,
-            x,
-            mu: 5.0,
-            theta: 0.005,
-            sigma: 0.01,
-            noise: 0.005,
-        }
+        MeanReverting { rng, x, mu: 5.0, theta: 0.005, sigma: 0.01, noise: 0.005 }
     }
 
     /// Advance `dt_s` seconds and return the measurement.
     pub fn step(&mut self, dt_s: f64) -> f64 {
-        self.x +=
-            self.theta * (self.mu - self.x) * dt_s + self.sigma * dt_s.sqrt() * self.rng.normal();
+        self.x += self.theta * (self.mu - self.x) * dt_s + self.sigma * dt_s.sqrt() * self.rng.normal();
         self.x + self.rng.normal() * self.noise
     }
 }
@@ -256,9 +226,7 @@ impl Signal {
 pub fn series(class: SignalClass, seed: u64, start: Timestamp, n: usize, dt_ms: i64) -> Vec<Point> {
     let mut s = Signal::new(class, seed);
     let dt_s = dt_ms as f64 / 1000.0;
-    (0..n)
-        .map(|i| Point::good(start + i as i64 * dt_ms, s.step(dt_s)))
-        .collect()
+    (0..n).map(|i| Point::good(start + i as i64 * dt_ms, s.step(dt_s))).collect()
 }
 
 #[cfg(test)]
@@ -292,10 +260,7 @@ mod tests {
             assert_eq!(a, series(class, 11, 0, 5000, 1000));
             assert_ne!(a, series(class, 12, 0, 5000, 1000));
             let (lo, hi) = class.span();
-            assert!(
-                a.iter().all(|p| p.value >= lo - 1.0 && p.value <= hi + 1.0),
-                "{class:?} out of span"
-            );
+            assert!(a.iter().all(|p| p.value >= lo - 1.0 && p.value <= hi + 1.0), "{class:?} out of span");
             assert!(!class.name().is_empty());
         }
     }
@@ -305,11 +270,7 @@ mod tests {
         let mut f = FirstOrder::flow(5);
         let vals: Vec<f64> = (0..20_000).map(|_| f.step(1.0)).collect();
         assert!(vals.iter().any(|v| *v < 2.0), "expected at least one trip");
-        let distinct_levels = vals
-            .windows(600)
-            .step_by(600)
-            .filter(|w| (w[0] - w[599]).abs() > 5.0)
-            .count();
+        let distinct_levels = vals.windows(600).step_by(600).filter(|w| (w[0] - w[599]).abs() > 5.0).count();
         assert!(distinct_levels > 0);
     }
 }

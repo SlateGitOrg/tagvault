@@ -39,22 +39,12 @@ pub struct BenchConfig {
 impl BenchConfig {
     /// Full benchmark: 8 tuning + 16 held-out series per class, 6 h at 1 s each.
     pub fn full() -> Self {
-        BenchConfig {
-            tune_seeds: 8,
-            heldout_seeds: 16,
-            points: 6 * 3600,
-            rmse_target: 0.001,
-        }
+        BenchConfig { tune_seeds: 8, heldout_seeds: 16, points: 6 * 3600, rmse_target: 0.001 }
     }
 
     /// Small configuration for tests.
     pub fn quick() -> Self {
-        BenchConfig {
-            tune_seeds: 2,
-            heldout_seeds: 3,
-            points: 3000,
-            rmse_target: 0.001,
-        }
+        BenchConfig { tune_seeds: 2, heldout_seeds: 3, points: 3000, rmse_target: 0.001 }
     }
 }
 
@@ -70,38 +60,18 @@ fn heldout_seed(i: u64) -> u64 {
 
 /// Exception then SDT, returning (archived points, exception-reported count).
 fn reduce(pts: &[Point], exc: f64, comp: f64, mode: SdtMode) -> (Vec<Point>, usize) {
-    let mut f = ExceptionFilter::new(
-        ExceptionConfig {
-            dev: exc,
-            max_ms: None,
-        },
-        ValueKind::Analog,
-    );
+    let mut f = ExceptionFilter::new(ExceptionConfig { dev: exc, max_ms: None }, ValueKind::Analog);
     let mut rep = Vec::new();
     for &p in pts {
         f.offer(p, &mut rep);
     }
     rep.extend(f.flush());
     let n = rep.len();
-    (
-        compress_series(
-            SdtConfig {
-                dev: comp,
-                max_ms: None,
-                mode,
-            },
-            ValueKind::Analog,
-            &rep,
-        ),
-        n,
-    )
+    (compress_series(SdtConfig { dev: comp, max_ms: None, mode }, ValueKind::Analog, &rep), n)
 }
 
 fn errors(raw: &[Point], arch: &[Point]) -> (f64, f64) {
-    let s = Series {
-        kind: ValueKind::Analog,
-        points: arch.to_vec(),
-    };
+    let s = Series { kind: ValueKind::Analog, points: arch.to_vec() };
     let mut max: f64 = 0.0;
     let mut sq = 0.0;
     for p in raw {
@@ -189,9 +159,8 @@ pub fn tune(cfg: &BenchConfig) -> (Vec<Tuned>, Vec<TradeoffPoint>) {
         .iter()
         .map(|&class| {
             let sp = span(class);
-            let sets: Vec<Vec<Point>> = (1..=cfg.tune_seeds)
-                .map(|s| series(class, s, START, cfg.points, 1000))
-                .collect();
+            let sets: Vec<Vec<Point>> =
+                (1..=cfg.tune_seeds).map(|s| series(class, s, START, cfg.points, 1000)).collect();
             let n = sets.len() as f64;
             let raw_total: usize = sets.iter().map(|r| r.len()).sum();
             let mut best = (DEV_GRID[0], f64::NAN);
@@ -216,13 +185,7 @@ pub fn tune(cfg: &BenchConfig) -> (Vec<Tuned>, Vec<TradeoffPoint>) {
                 }
             }
             let comp = best.0 * sp;
-            Tuned {
-                class,
-                comp_frac: best.0,
-                comp_dev: comp,
-                exc_dev: comp / 2.0,
-                tune_rmse_frac: best.1,
-            }
+            Tuned { class, comp_frac: best.0, comp_dev: comp, exc_dev: comp / 2.0, tune_rmse_frac: best.1 }
         })
         .collect();
     (tuned, curve)
@@ -235,8 +198,7 @@ pub fn evaluate(cfg: &BenchConfig, tuned: &[Tuned]) -> Vec<HeldOut> {
         .map(|t| {
             let sp = span(t.class);
             let bound = 2.0 * t.exc_dev + t.comp_dev;
-            let (mut raw_pts, mut reported, mut lookback, mut strict, mut classic) =
-                (0u64, 0u64, 0u64, 0u64, 0u64);
+            let (mut raw_pts, mut reported, mut lookback, mut strict, mut classic) = (0u64, 0u64, 0u64, 0u64, 0u64);
             let (mut f_err, mut s_err, mut c_err, mut violations) = (0.0f64, 0.0f64, 0.0f64, 0u64);
             let (mut bytes, mut lossless, mut sq) = (0usize, 0usize, 0.0);
             for i in 0..cfg.heldout_seeds {
@@ -358,12 +320,8 @@ pub fn tuned_policy(tuned: &[Tuned]) -> Policy {
 /// Load held-out series into an archive in `dir` and time queries.
 pub fn query_bench(cfg: &BenchConfig, tuned: &[Tuned], dir: &Path) -> Result<QueryBench> {
     let policy = tuned_policy(tuned);
-    let opts = ArchiveOptions {
-        sync: SyncMode::Os,
-        flush_points: 200_000,
-        policy: policy.clone(),
-        ..Default::default()
-    };
+    let opts =
+        ArchiveOptions { sync: SyncMode::Os, flush_points: 200_000, policy: policy.clone(), ..Default::default() };
     let mut archive = Archive::open(&dir.join("archive"), opts)?;
     let mut tags = Vec::new();
     let mut raw_by_tag = Vec::new();
@@ -410,23 +368,13 @@ pub fn query_bench(cfg: &BenchConfig, tuned: &[Tuned], dir: &Path) -> Result<Que
     // fsync'd commit latency on a separate small archive.
     let mut fs_archive = Archive::open(
         &dir.join("fsync"),
-        ArchiveOptions {
-            sync: SyncMode::Always,
-            policy: policy.clone(),
-            ..Default::default()
-        },
+        ArchiveOptions { sync: SyncMode::Always, policy: policy.clone(), ..Default::default() },
     )?;
     let mut commit = Vec::new();
     let raw0 = &raw_by_tag[0];
     for (b, chunk) in raw0.chunks(1000).take(20).enumerate() {
-        let batch: Vec<Sample> = chunk
-            .iter()
-            .map(|p| Sample {
-                tag: format!("fsync/{b}"),
-                kind: ValueKind::Analog,
-                point: *p,
-            })
-            .collect();
+        let batch: Vec<Sample> =
+            chunk.iter().map(|p| Sample { tag: format!("fsync/{b}"), kind: ValueKind::Analog, point: *p }).collect();
         let t = Instant::now();
         fs_archive.write(&batch)?;
         commit.push(t.elapsed().as_secs_f64() * 1e3);
@@ -455,19 +403,8 @@ pub fn query_bench(cfg: &BenchConfig, tuned: &[Tuned], dir: &Path) -> Result<Que
         let rows = query::aggregate(&s, start, end, 900_000)?;
         agg_lat.push(t.elapsed().as_secs_f64() * 1e6);
 
-        let truth = query::aggregate(
-            &Series {
-                kind: ValueKind::Analog,
-                points: raw.clone(),
-            },
-            start,
-            end,
-            900_000,
-        )?;
-        let tn = tuned
-            .iter()
-            .find(|x| x.class == *class)
-            .expect("tuned class");
+        let truth = query::aggregate(&Series { kind: ValueKind::Analog, points: raw.clone() }, start, end, 900_000)?;
+        let tn = tuned.iter().find(|x| x.class == *class).expect("tuned class");
         let bound = 2.0 * tn.exc_dev + tn.comp_dev;
         for (a, b) in rows.iter().zip(&truth) {
             if let (Some(x), Some(y)) = (a.avg, b.avg) {
@@ -517,7 +454,9 @@ pub fn to_markdown(r: &BenchReport) -> String {
          Exception deviation = comp/2, so the guaranteed bound is 2·exc + comp = 2·comp.\n\n",
         r.tune_seeds, r.heldout_seeds, r.points_per_series
     ));
-    s.push_str("**Trade-off on the tuning split** (raw points / archived points; RMSE in % of span, lookback mode)\n\n");
+    s.push_str(
+        "**Trade-off on the tuning split** (raw points / archived points; RMSE in % of span, lookback mode)\n\n",
+    );
     s.push_str("| class |");
     for f in DEV_GRID {
         s.push_str(&format!(" {:.2}% |", f * 100.0));
@@ -537,9 +476,7 @@ pub fn to_markdown(r: &BenchReport) -> String {
         }
         s.push('\n');
     }
-    s.push_str(
-        "\n**Held-out results at the tuned deviation** (largest grid value with tuning RMSE ≤ ",
-    );
+    s.push_str("\n**Held-out results at the tuned deviation** (largest grid value with tuning RMSE ≤ ");
     s.push_str(&format!("{:.2}% of span)\n\n", r.rmse_target * 100.0));
     s.push_str("| class | comp dev (% span) | exception only | lookback SDT | strict SDT | classic SDT | bytes/archived pt | byte ratio (lookback) | lossless Gorilla | max err / bound (lookback, strict, classic) | classic violations | RMSE (% span) |\n");
     s.push_str("|---|---|---|---|---|---|---|---|---|---|---|---|\n");
@@ -570,19 +507,13 @@ pub fn to_markdown(r: &BenchReport) -> String {
         q.tags, q.raw_points, q.archived_points, q.segment_bytes
     ));
     s.push_str("| metric | value |\n|---|---|\n");
-    s.push_str(&format!("| ingest (exception-filtered points/s into `Archive::write`, WAL without fsync) | {:.0} |\n", q.ingest_points_per_s));
     s.push_str(&format!(
-        "| fsync'd 1 000-point batch commit, p50 | {:.2} ms |\n",
-        q.fsync_commit_p50_ms
+        "| ingest (exception-filtered points/s into `Archive::write`, WAL without fsync) | {:.0} |\n",
+        q.ingest_points_per_s
     ));
-    s.push_str(&format!(
-        "| raw query, full 6 h range, p50 | {:.0} µs |\n",
-        q.raw_p50_us
-    ));
-    s.push_str(&format!(
-        "| interpolated 1-min grid over 6 h, p50 | {:.0} µs |\n",
-        q.interpolated_p50_us
-    ));
+    s.push_str(&format!("| fsync'd 1 000-point batch commit, p50 | {:.2} ms |\n", q.fsync_commit_p50_ms));
+    s.push_str(&format!("| raw query, full 6 h range, p50 | {:.0} µs |\n", q.raw_p50_us));
+    s.push_str(&format!("| interpolated 1-min grid over 6 h, p50 | {:.0} µs |\n", q.interpolated_p50_us));
     s.push_str(&format!(
         "| 15-min TWA/min/max/count over 6 h, p50 / p95 | {:.0} / {:.0} µs |\n",
         q.aggregate_p50_us, q.aggregate_p95_us
@@ -609,10 +540,7 @@ mod tests {
             assert!(h.strict_max_err_over_bound <= 1.0 + 1e-9, "{h:?}");
             assert!(h.point_ratio > 1.0);
             assert!(h.lookback_points <= h.strict_points);
-            assert!(
-                h.byte_ratio > h.point_ratio,
-                "Gorilla encoding should add to point reduction"
-            );
+            assert!(h.byte_ratio > h.point_ratio, "Gorilla encoding should add to point reduction");
         }
         assert_eq!(r.tradeoff.len(), 4 * DEV_GRID.len());
         assert!(r.query.twa_max_err_over_bound <= 1.0 + 1e-9);

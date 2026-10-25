@@ -11,10 +11,7 @@ pub struct Rng {
 impl Rng {
     /// Seeded generator.
     pub fn new(seed: u64) -> Self {
-        Rng {
-            state: seed ^ 0x9E37_79B9_7F4A_7C15,
-            spare: None,
-        }
+        Rng { state: seed ^ 0x9E37_79B9_7F4A_7C15, spare: None }
     }
 
     /// Next raw 64-bit value.

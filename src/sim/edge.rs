@@ -55,28 +55,12 @@ impl SimDevice {
     /// A buffer tank: `Level` (Double, %), `InletFlow` (Float, m³/h), `PumpRunning` (Boolean).
     pub fn tank(id: &str, seed: u64, first_alias: u64) -> Self {
         let metrics = vec![
-            MetricSpec {
-                name: "Level",
-                alias: first_alias,
-                datatype: DataType::Double,
-            },
-            MetricSpec {
-                name: "InletFlow",
-                alias: first_alias + 1,
-                datatype: DataType::Float,
-            },
-            MetricSpec {
-                name: "PumpRunning",
-                alias: first_alias + 2,
-                datatype: DataType::Boolean,
-            },
+            MetricSpec { name: "Level", alias: first_alias, datatype: DataType::Double },
+            MetricSpec { name: "InletFlow", alias: first_alias + 1, datatype: DataType::Float },
+            MetricSpec { name: "PumpRunning", alias: first_alias + 2, datatype: DataType::Boolean },
         ];
-        let mut d = SimDevice {
-            id: id.into(),
-            model: Model::Tank(Box::new(Tank::new(seed))),
-            metrics,
-            last: Vec::new(),
-        };
+        let mut d =
+            SimDevice { id: id.into(), model: Model::Tank(Box::new(Tank::new(seed))), metrics, last: Vec::new() };
         d.last = d.sample(1.0);
         d
     }
@@ -84,33 +68,16 @@ impl SimDevice {
     /// A reactor: `Temperature` (Double, °C), `Pressure` (Float, bar), `CoolantFlow` (Float, m³/h).
     pub fn reactor(id: &str, seed: u64, first_alias: u64) -> Self {
         let metrics = vec![
-            MetricSpec {
-                name: "Temperature",
-                alias: first_alias,
-                datatype: DataType::Double,
-            },
-            MetricSpec {
-                name: "Pressure",
-                alias: first_alias + 1,
-                datatype: DataType::Float,
-            },
-            MetricSpec {
-                name: "CoolantFlow",
-                alias: first_alias + 2,
-                datatype: DataType::Float,
-            },
+            MetricSpec { name: "Temperature", alias: first_alias, datatype: DataType::Double },
+            MetricSpec { name: "Pressure", alias: first_alias + 1, datatype: DataType::Float },
+            MetricSpec { name: "CoolantFlow", alias: first_alias + 2, datatype: DataType::Float },
         ];
         let model = Model::Reactor(Box::new(Reactor {
             temp: FirstOrder::temperature(seed),
             pressure: MeanReverting::pressure(seed.wrapping_add(1)),
             coolant: FirstOrder::flow(seed.wrapping_add(2)),
         }));
-        let mut d = SimDevice {
-            id: id.into(),
-            model,
-            metrics,
-            last: Vec::new(),
-        };
+        let mut d = SimDevice { id: id.into(), model, metrics, last: Vec::new() };
         d.last = d.sample(1.0);
         d
     }
@@ -121,11 +88,7 @@ impl SimDevice {
                 let r = t.step(dt_s);
                 vec![r.level, r.inflow, f64::from(u8::from(r.pump_on))]
             }
-            Model::Reactor(r) => vec![
-                r.temp.step(dt_s),
-                r.pressure.step(dt_s),
-                r.coolant.step(dt_s),
-            ],
+            Model::Reactor(r) => vec![r.temp.step(dt_s), r.pressure.step(dt_s), r.coolant.step(dt_s)],
         }
     }
 
@@ -187,10 +150,8 @@ impl EdgeNode {
 
     /// Standard plant cell: a tank and a reactor, aliases starting at 1 (node metric = alias 1).
     pub fn plant_cell(group: &str, edge: &str, seed: u64) -> Self {
-        let devices = vec![
-            SimDevice::tank("Tank01", seed, 10),
-            SimDevice::reactor("Reactor01", seed.wrapping_add(100), 20),
-        ];
+        let devices =
+            vec![SimDevice::tank("Tank01", seed, 10), SimDevice::reactor("Reactor01", seed.wrapping_add(100), 20)];
         EdgeNode::new(group, edge, devices)
     }
 
@@ -260,18 +221,10 @@ impl EdgeNode {
         for di in 0..self.devices.len() {
             let seq = self.next_seq();
             let d = &self.devices[di];
-            let metrics = (0..d.metrics.len())
-                .map(|i| d.metric(i, now, true))
-                .collect();
-            let p = Payload {
-                timestamp: Some(now as u64),
-                metrics,
-                seq: Some(seq),
-                ..Default::default()
-            };
+            let metrics = (0..d.metrics.len()).map(|i| d.metric(i, now, true)).collect();
+            let p = Payload { timestamp: Some(now as u64), metrics, seq: Some(seq), ..Default::default() };
             out.push(SpMessage {
-                topic: Topic::device(MessageType::DBirth, &self.group, &self.edge, &d.id)
-                    .to_string(),
+                topic: Topic::device(MessageType::DBirth, &self.group, &self.edge, &d.id).to_string(),
                 payload: encode(p),
             });
         }
@@ -294,18 +247,10 @@ impl EdgeNode {
         for di in 0..self.devices.len() {
             let seq = self.next_seq();
             let d = &self.devices[di];
-            let metrics = (0..d.metrics.len())
-                .map(|i| d.metric(i, now, false))
-                .collect();
-            let p = Payload {
-                timestamp: Some(now as u64),
-                metrics,
-                seq: Some(seq),
-                ..Default::default()
-            };
+            let metrics = (0..d.metrics.len()).map(|i| d.metric(i, now, false)).collect();
+            let p = Payload { timestamp: Some(now as u64), metrics, seq: Some(seq), ..Default::default() };
             out.push(SpMessage {
-                topic: Topic::device(MessageType::DData, &self.group, &self.edge, &d.id)
-                    .to_string(),
+                topic: Topic::device(MessageType::DData, &self.group, &self.edge, &d.id).to_string(),
                 payload: encode(p),
             });
         }
@@ -331,9 +276,8 @@ impl EdgeNode {
         out
     }
 
-    /// The NDEATH the broker publishes from the node's MQTT will (no `seq`).
-    pub fn death(&mut self, now: Timestamp) -> SpMessage {
-        self.online = false;
+    /// The NDEATH certificate for the current session (registered as the MQTT will; no `seq`).
+    pub fn death_certificate(&self, now: Timestamp) -> SpMessage {
         let p = Payload {
             timestamp: Some(now as u64),
             metrics: vec![Metric {
@@ -344,11 +288,15 @@ impl EdgeNode {
             }],
             ..Default::default()
         };
+        SpMessage { topic: Topic::node(MessageType::NDeath, &self.group, &self.edge).to_string(), payload: encode(p) }
+    }
+
+    /// The node dies: the broker publishes its will; the next session uses `bdSeq + 1`.
+    pub fn death(&mut self, now: Timestamp) -> SpMessage {
+        let m = self.death_certificate(now);
+        self.online = false;
         self.bd_seq += 1;
-        SpMessage {
-            topic: Topic::node(MessageType::NDeath, &self.group, &self.edge).to_string(),
-            payload: encode(p),
-        }
+        m
     }
 
     /// Handle a command addressed to this node. Returns true if it was a rebirth request.
@@ -363,8 +311,7 @@ impl EdgeNode {
             return false;
         };
         let rebirth = p.metrics.iter().any(|m| {
-            m.name.as_deref() == Some("Node Control/Rebirth")
-                && m.value == Some(metric::Value::BooleanValue(true))
+            m.name.as_deref() == Some("Node Control/Rebirth") && m.value == Some(metric::Value::BooleanValue(true))
         });
         if rebirth && self.online {
             self.rebirth_pending = true;

@@ -87,11 +87,7 @@ pub struct SdtConfig {
 
 impl Default for SdtConfig {
     fn default() -> Self {
-        SdtConfig {
-            dev: 0.0,
-            max_ms: Some(3_600_000),
-            mode: SdtMode::Lookback,
-        }
+        SdtConfig { dev: 0.0, max_ms: Some(3_600_000), mode: SdtMode::Lookback }
     }
 }
 
@@ -113,10 +109,7 @@ pub struct Sdt {
 
 fn window(anchor: Point, q: Point, dev: f64) -> (f64, f64) {
     let dt = (q.ts - anchor.ts) as f64;
-    (
-        (q.value - dev - anchor.value) / dt,
-        (q.value + dev - anchor.value) / dt,
-    )
+    ((q.value - dev - anchor.value) / dt, (q.value + dev - anchor.value) / dt)
 }
 
 fn slope(a: Point, b: Point) -> f64 {
@@ -225,8 +218,7 @@ impl Sdt {
                 continue;
             }
             let (lo, hi) = (self.lo.max(pl), self.hi.min(ph));
-            let forced =
-                self.cfg.max_ms.is_some_and(|m| p.ts - a.ts > m) || self.buf.len() >= LOOKBACK_CAP;
+            let forced = self.cfg.max_ms.is_some_and(|m| p.ts - a.ts > m) || self.buf.len() >= LOOKBACK_CAP;
             if forced || lo > hi {
                 queue.push_front(p);
                 let rest = self.cut(out);
@@ -360,15 +352,12 @@ impl Sdt {
     pub fn decode(c: &mut Cursor<'_>) -> Result<Sdt> {
         let dev = c.f64()?;
         let max = c.i64()?;
-        let mode =
-            SdtMode::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad sdt mode".into()))?;
-        let kind =
-            ValueKind::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad value kind".into()))?;
+        let mode = SdtMode::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad sdt mode".into()))?;
+        let kind = ValueKind::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad value kind".into()))?;
         let point = |c: &mut Cursor<'_>| -> Result<Point> {
             let ts = c.i64()?;
             let value = c.f64()?;
-            let quality =
-                Quality::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad quality".into()))?;
+            let quality = Quality::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad quality".into()))?;
             Ok(Point { ts, value, quality })
         };
         let mut pts = [None, None];
@@ -392,11 +381,7 @@ impl Sdt {
         let lo = c.f64()?;
         let hi = c.f64()?;
         Ok(Sdt {
-            cfg: SdtConfig {
-                dev,
-                max_ms: (max >= 0).then_some(max),
-                mode,
-            },
+            cfg: SdtConfig { dev, max_ms: (max >= 0).then_some(max), mode },
             kind,
             anchor: pts[0],
             held: pts[1],
@@ -425,19 +410,11 @@ mod tests {
     use crate::encoding::varint::Cursor;
 
     fn strict(dev: f64) -> SdtConfig {
-        SdtConfig {
-            dev,
-            max_ms: None,
-            mode: SdtMode::Strict,
-        }
+        SdtConfig { dev, max_ms: None, mode: SdtMode::Strict }
     }
 
     fn lookback(dev: f64) -> SdtConfig {
-        SdtConfig {
-            dev,
-            max_ms: None,
-            mode: SdtMode::Lookback,
-        }
+        SdtConfig { dev, max_ms: None, mode: SdtMode::Lookback }
     }
 
     fn lerp(a: Point, b: Point, t: i64) -> f64 {
@@ -448,11 +425,7 @@ mod tests {
         let mut worst: f64 = 0.0;
         for q in orig {
             let i = arch.partition_point(|a| a.ts <= q.ts);
-            let v = if arch[i - 1].ts == q.ts {
-                arch[i - 1].value
-            } else {
-                lerp(arch[i - 1], arch[i], q.ts)
-            };
+            let v = if arch[i - 1].ts == q.ts { arch[i - 1].value } else { lerp(arch[i - 1], arch[i], q.ts) };
             worst = worst.max((v - q.value).abs());
         }
         worst
@@ -460,9 +433,7 @@ mod tests {
 
     #[test]
     fn straight_line_compresses_to_endpoints() {
-        let pts: Vec<Point> = (0..100)
-            .map(|i| Point::good(i * 1000, 2.0 * i as f64))
-            .collect();
+        let pts: Vec<Point> = (0..100).map(|i| Point::good(i * 1000, 2.0 * i as f64)).collect();
         let arch = compress_series(strict(0.01), ValueKind::Analog, &pts);
         assert_eq!(arch.len(), 2);
         assert_eq!(arch[0].ts, 0);
@@ -473,21 +444,9 @@ mod tests {
     fn classic_mode_can_exceed_deviation() {
         // A=(0,0), Q=(1,0), H=(10,10.5): the doors (dev=1) have not crossed, so classic SDT
         // keeps H; but the line A→H passes 1.05 away from Q.
-        let pts = vec![
-            Point::good(0, 0.0),
-            Point::good(1, 0.0),
-            Point::good(10, 10.5),
-            Point::good(11, 30.0),
-        ];
-        let classic = compress_series(
-            SdtConfig {
-                dev: 1.0,
-                max_ms: None,
-                mode: SdtMode::Classic,
-            },
-            ValueKind::Analog,
-            &pts,
-        );
+        let pts = vec![Point::good(0, 0.0), Point::good(1, 0.0), Point::good(10, 10.5), Point::good(11, 30.0)];
+        let classic =
+            compress_series(SdtConfig { dev: 1.0, max_ms: None, mode: SdtMode::Classic }, ValueKind::Analog, &pts);
         assert!(max_error(&pts, &classic) > 1.0);
         let strict_arch = compress_series(strict(1.0), ValueKind::Analog, &pts);
         assert!(max_error(&pts, &strict_arch) <= 1.0);
@@ -501,31 +460,19 @@ mod tests {
     #[test]
     fn lookback_respects_bound_and_beats_strict_on_noisy_ramps() {
         let mut r = crate::sim::rng::Rng::new(3);
-        let pts: Vec<Point> = (0..5000)
-            .map(|i| Point::good(i * 1000, i as f64 * 0.01 + r.normal() * 0.05))
-            .collect();
+        let pts: Vec<Point> = (0..5000).map(|i| Point::good(i * 1000, i as f64 * 0.01 + r.normal() * 0.05)).collect();
         let lb = compress_series(lookback(0.2), ValueKind::Analog, &pts);
         let st = compress_series(strict(0.2), ValueKind::Analog, &pts);
         assert!(max_error(&pts, &lb) <= 0.2 + 1e-9);
-        assert!(
-            lb.len() * 3 < st.len(),
-            "lookback {} vs strict {}",
-            lb.len(),
-            st.len()
-        );
+        assert!(lb.len() * 3 < st.len(), "lookback {} vs strict {}", lb.len(), st.len());
         for a in &lb {
-            assert!(
-                pts.iter().any(|p| p.ts == a.ts && p.value == a.value),
-                "archived values are measurements"
-            );
+            assert!(pts.iter().any(|p| p.ts == a.ts && p.value == a.value), "archived values are measurements");
         }
     }
 
     #[test]
     fn lookback_cap_and_max_time_end_segments() {
-        let pts: Vec<Point> = (0..(LOOKBACK_CAP as i64 + 10))
-            .map(|i| Point::good(i, 1.0))
-            .collect();
+        let pts: Vec<Point> = (0..(LOOKBACK_CAP as i64 + 10)).map(|i| Point::good(i, 1.0)).collect();
         let mut s = Sdt::new(lookback(0.5), ValueKind::Analog);
         let mut out = Vec::new();
         for &p in &pts {
@@ -534,11 +481,7 @@ mod tests {
         assert!(out.len() >= 2, "a full buffer must end the segment");
         assert!(s.pending().len() < LOOKBACK_CAP);
         let timed = compress_series(
-            SdtConfig {
-                dev: 0.5,
-                max_ms: Some(100),
-                mode: SdtMode::Lookback,
-            },
+            SdtConfig { dev: 0.5, max_ms: Some(100), mode: SdtMode::Lookback },
             ValueKind::Analog,
             &pts[..1000],
         );
@@ -552,9 +495,7 @@ mod tests {
         let mut seed = 7u64;
         let pts: Vec<Point> = (0..2000)
             .map(|i| {
-                seed = seed
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let noise = ((seed >> 33) as f64 / (1u64 << 31) as f64 - 0.5) * 0.2;
                 Point::good(i * 1000, (i as f64 * 0.01).sin() * 10.0 + noise)
             })
@@ -585,12 +526,8 @@ mod tests {
 
     #[test]
     fn non_finite_good_values_are_archived_verbatim() {
-        let pts = vec![
-            Point::good(0, 1.0),
-            Point::good(1000, f64::INFINITY),
-            Point::good(2000, 1.0),
-            Point::good(3000, 1.0),
-        ];
+        let pts =
+            vec![Point::good(0, 1.0), Point::good(1000, f64::INFINITY), Point::good(2000, 1.0), Point::good(3000, 1.0)];
         let arch = compress_series(strict(0.5), ValueKind::Analog, &pts);
         assert!(arch.iter().any(|p| p.value.is_infinite()));
         assert_eq!(arch.last().unwrap().ts, 3000);
@@ -599,11 +536,7 @@ mod tests {
     #[test]
     fn discrete_archives_changes_only() {
         let vals = [0.0, 0.0, 1.0, 1.0, 1.0, 0.0];
-        let pts: Vec<Point> = vals
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| Point::good(i as i64, v))
-            .collect();
+        let pts: Vec<Point> = vals.iter().enumerate().map(|(i, &v)| Point::good(i as i64, v)).collect();
         let arch = compress_series(strict(10.0), ValueKind::Discrete, &pts);
         let ts: Vec<i64> = arch.iter().map(|p| p.ts).collect();
         // 0, change at 2, change at 5 (the flush has nothing left to add).
@@ -613,15 +546,8 @@ mod tests {
     #[test]
     fn max_time_forces_archive() {
         let pts: Vec<Point> = (0..20).map(|i| Point::good(i * 1000, 3.0)).collect();
-        let arch = compress_series(
-            SdtConfig {
-                dev: 1.0,
-                max_ms: Some(5000),
-                mode: SdtMode::Strict,
-            },
-            ValueKind::Analog,
-            &pts,
-        );
+        let arch =
+            compress_series(SdtConfig { dev: 1.0, max_ms: Some(5000), mode: SdtMode::Strict }, ValueKind::Analog, &pts);
         for w in arch.windows(2) {
             assert!(w[1].ts - w[0].ts <= 6000);
         }
@@ -630,14 +556,8 @@ mod tests {
 
     #[test]
     fn state_roundtrips_and_continues_identically() {
-        let pts: Vec<Point> = (0..500)
-            .map(|i| Point::good(i * 1000, ((i * i) % 97) as f64 / 10.0))
-            .collect();
-        let cfg = SdtConfig {
-            dev: 0.3,
-            max_ms: Some(60_000),
-            mode: SdtMode::Strict,
-        };
+        let pts: Vec<Point> = (0..500).map(|i| Point::good(i * 1000, ((i * i) % 97) as f64 / 10.0)).collect();
+        let cfg = SdtConfig { dev: 0.3, max_ms: Some(60_000), mode: SdtMode::Strict };
         let mut a = Sdt::new(cfg, ValueKind::Analog);
         let mut out_a = Vec::new();
         for &p in &pts[..250] {

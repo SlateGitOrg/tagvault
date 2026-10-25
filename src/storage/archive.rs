@@ -176,10 +176,7 @@ impl Archive {
             (wal, records)
         } else {
             let cp = Checkpoint::default();
-            (
-                Wal::create(&wal_path, &cp, opts.sync)?,
-                vec![WalRecord::Checkpoint(cp)],
-            )
+            (Wal::create(&wal_path, &cp, opts.sync)?, vec![WalRecord::Checkpoint(cp)])
         };
         let mut records = records.into_iter();
         let Some(WalRecord::Checkpoint(cp)) = records.next() else {
@@ -230,11 +227,7 @@ impl Archive {
         for (si, seg) in archive.segments.iter().enumerate() {
             for (ci, meta) in seg.chunks().iter().enumerate() {
                 let tag = archive.tags.get_mut(meta.tag as usize).ok_or_else(|| {
-                    Error::Corrupt(format!(
-                        "segment {} references unknown tag {}",
-                        seg.id(),
-                        meta.tag
-                    ))
+                    Error::Corrupt(format!("segment {} references unknown tag {}", seg.id(), meta.tag))
                 })?;
                 tag.chunks.push((si, ci));
             }
@@ -242,15 +235,8 @@ impl Archive {
         for rec in records {
             recovery.replayed_records += 1;
             match rec {
-                WalRecord::Checkpoint(_) => {
-                    return Err(Error::Corrupt("checkpoint in WAL body".into()))
-                }
-                WalRecord::TagDef {
-                    id,
-                    name,
-                    kind,
-                    config,
-                } => {
+                WalRecord::Checkpoint(_) => return Err(Error::Corrupt("checkpoint in WAL body".into())),
+                WalRecord::TagDef { id, name, kind, config } => {
                     archive.install_tag(id, name, Sdt::new(config, kind), None)?;
                 }
                 WalRecord::Points(pts) => {
@@ -265,34 +251,17 @@ impl Archive {
             archive.apply_policy()?;
         }
         if archive.recovery != RecoveryReport::default() {
-            log::info!(
-                "archive {} recovered: {:?}",
-                dir.display(),
-                archive.recovery
-            );
+            log::info!("archive {} recovered: {:?}", dir.display(), archive.recovery);
         }
         Ok(archive)
     }
 
-    fn install_tag(
-        &mut self,
-        id: TagId,
-        name: String,
-        sdt: Sdt,
-        last_ts: Option<Timestamp>,
-    ) -> Result<()> {
+    fn install_tag(&mut self, id: TagId, name: String, sdt: Sdt, last_ts: Option<Timestamp>) -> Result<()> {
         if id as usize != self.tags.len() || self.by_name.contains_key(&name) {
             return Err(Error::Corrupt(format!("tag {id} ({name}) out of sequence")));
         }
         self.by_name.insert(name.clone(), id);
-        self.tags.push(TagState {
-            id,
-            name,
-            sdt,
-            last_ts,
-            mem: Vec::new(),
-            chunks: Vec::new(),
-        });
+        self.tags.push(TagState { id, name, sdt, last_ts, mem: Vec::new(), chunks: Vec::new() });
         Ok(())
     }
 
@@ -321,10 +290,7 @@ impl Archive {
         let mut archived = 0u64;
         let mut out = Vec::new();
         for (id, p) in pts {
-            let tag = self
-                .tags
-                .get_mut(*id as usize)
-                .ok_or_else(|| Error::Corrupt(format!("unknown tag id {id}")))?;
+            let tag = self.tags.get_mut(*id as usize).ok_or_else(|| Error::Corrupt(format!("unknown tag id {id}")))?;
             tag.last_ts = Some(p.ts);
             out.clear();
             tag.sdt.offer(*p, &mut out);
@@ -338,9 +304,7 @@ impl Archive {
     /// Durably accept a batch of samples.
     pub fn write(&mut self, samples: &[Sample]) -> Result<WriteReport> {
         if self.poisoned {
-            return Err(Error::InvalidInput(
-                "archive is read-only after a failed WAL write; reopen it".into(),
-            ));
+            return Err(Error::InvalidInput("archive is read-only after a failed WAL write; reopen it".into()));
         }
         let mut report = WriteReport::default();
         let mut accepted: Vec<(TagId, Point)> = Vec::with_capacity(samples.len());
@@ -351,25 +315,17 @@ impl Archive {
             let id = match self.by_name.get(&s.tag) {
                 Some(&id) => id,
                 None => {
-                    let id = TagId::try_from(self.tags.len())
-                        .map_err(|_| Error::InvalidInput("too many tags".into()))?;
+                    let id =
+                        TagId::try_from(self.tags.len()).map_err(|_| Error::InvalidInput("too many tags".into()))?;
                     let config = self.opts.policy.resolve(&s.tag).compression;
-                    self.wal.append(&WalRecord::TagDef {
-                        id,
-                        name: s.tag.clone(),
-                        kind: s.kind,
-                        config,
-                    });
+                    self.wal.append(&WalRecord::TagDef { id, name: s.tag.clone(), kind: s.kind, config });
                     let sdt = Sdt::new(config, s.kind);
                     self.install_tag(id, s.tag.clone(), sdt, None)?;
                     new_tags += 1;
                     id
                 }
             };
-            let last = batch_last
-                .get(&id)
-                .copied()
-                .or(self.tags[id as usize].last_ts);
+            let last = batch_last.get(&id).copied().or(self.tags[id as usize].last_ts);
             if last.is_some_and(|l| s.point.ts <= l) {
                 report.rejected_out_of_order += 1;
                 continue;
@@ -400,12 +356,8 @@ impl Archive {
     /// Write buffered archived points to a new segment and rotate the WAL to a fresh checkpoint.
     pub fn flush(&mut self) -> Result<()> {
         let seg_dir = self.dir.join(SEGMENT_DIR);
-        let chunks: Vec<(TagId, &[Point])> = self
-            .tags
-            .iter()
-            .filter(|t| !t.mem.is_empty())
-            .map(|t| (t.id, t.mem.as_slice()))
-            .collect();
+        let chunks: Vec<(TagId, &[Point])> =
+            self.tags.iter().filter(|t| !t.mem.is_empty()).map(|t| (t.id, t.mem.as_slice())).collect();
         let mut new_segment = None;
         if !chunks.is_empty() {
             let id = self.last_segment + 1;
@@ -417,12 +369,7 @@ impl Archive {
             tags: self
                 .tags
                 .iter()
-                .map(|t| TagCheckpoint {
-                    id: t.id,
-                    name: t.name.clone(),
-                    sdt: t.sdt.clone(),
-                    last_ts: t.last_ts,
-                })
+                .map(|t| TagCheckpoint { id: t.id, name: t.name.clone(), sdt: t.sdt.clone(), last_ts: t.last_ts })
                 .collect(),
         };
         self.wal = Wal::create(&self.dir.join(WAL_FILE), &cp, self.opts.sync)?;
@@ -469,9 +416,7 @@ impl Archive {
     }
 
     fn tag(&self, name: &str) -> Result<&TagState> {
-        let id = self
-            .tag_id(name)
-            .ok_or_else(|| Error::UnknownTag(name.to_string()))?;
+        let id = self.tag_id(name).ok_or_else(|| Error::UnknownTag(name.to_string()))?;
         Ok(&self.tags[id as usize])
     }
 
@@ -489,11 +434,7 @@ impl Archive {
                 name: t.name.clone(),
                 kind: t.sdt.kind(),
                 comp_dev: t.sdt.config().dev,
-                archived_points: t
-                    .chunks
-                    .iter()
-                    .map(|&r| self.chunk_meta(r).count as u64)
-                    .sum::<u64>()
+                archived_points: t.chunks.iter().map(|&r| self.chunk_meta(r).count as u64).sum::<u64>()
                     + t.mem.len() as u64,
                 snapshot: t.sdt.snapshot(),
             })
@@ -505,9 +446,7 @@ impl Archive {
     /// Archived points for `tag` covering `[start, end]` (see [`Series`]).
     pub fn series(&self, tag: &str, start: Timestamp, end: Timestamp) -> Result<Series> {
         if end < start {
-            return Err(Error::InvalidInput(format!(
-                "end {end} is before start {start}"
-            )));
+            return Err(Error::InvalidInput(format!("end {end} is before start {start}")));
         }
         let t = self.tag(tag)?;
         let metas: Vec<&ChunkMeta> = t.chunks.iter().map(|&r| self.chunk_meta(r)).collect();
@@ -527,15 +466,8 @@ impl Archive {
         }
         let a = pts.partition_point(|p| p.ts < start).saturating_sub(1);
         let b = (pts.partition_point(|p| p.ts <= end) + 1).min(pts.len());
-        let points = if a < b {
-            pts[a..b].to_vec()
-        } else {
-            Vec::new()
-        };
-        Ok(Series {
-            kind: t.sdt.kind(),
-            points,
-        })
+        let points = if a < b { pts[a..b].to_vec() } else { Vec::new() };
+        Ok(Series { kind: t.sdt.kind(), points })
     }
 
     /// Counters and sizes.
@@ -545,12 +477,7 @@ impl Archive {
             segments: self.segments.len(),
             segment_bytes: self.segments.iter().map(|s| s.size()).sum(),
             wal_bytes: self.wal.len(),
-            segment_points: self
-                .segments
-                .iter()
-                .flat_map(|s| s.chunks())
-                .map(|c| c.count as u64)
-                .sum(),
+            segment_points: self.segments.iter().flat_map(|s| s.chunks()).map(|c| c.count as u64).sum(),
             memtable_points: self.mem_points as u64,
             ..self.stats.clone()
         }
@@ -564,10 +491,7 @@ impl Archive {
             for &(si, ci) in &t.chunks {
                 for p in self.segments[si].read_chunk(&self.segments[si].chunks()[ci])? {
                     if prev.is_some_and(|q| p.ts <= q) {
-                        return Err(Error::Corrupt(format!(
-                            "tag {} has non-increasing timestamps",
-                            t.name
-                        )));
+                        return Err(Error::Corrupt(format!("tag {} has non-increasing timestamps", t.name)));
                     }
                     prev = Some(p.ts);
                     n += 1;

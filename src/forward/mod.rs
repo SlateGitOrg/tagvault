@@ -32,8 +32,7 @@ impl fmt::Display for DeliveryError {
 /// Destination of forwarded batches.
 pub trait Sink {
     /// Deliver one encoded batch (see [`batch`]).
-    fn deliver(&mut self, payload: &[u8], now: Timestamp)
-        -> std::result::Result<(), DeliveryError>;
+    fn deliver(&mut self, payload: &[u8], now: Timestamp) -> std::result::Result<(), DeliveryError>;
 }
 
 /// Delivers into an archive in the same process.
@@ -46,24 +45,14 @@ pub struct ArchiveSink<'a> {
 impl<'a> ArchiveSink<'a> {
     /// Wrap an open archive.
     pub fn new(archive: &'a mut Archive) -> Self {
-        ArchiveSink {
-            archive,
-            rejected_points: 0,
-        }
+        ArchiveSink { archive, rejected_points: 0 }
     }
 }
 
 impl Sink for ArchiveSink<'_> {
-    fn deliver(
-        &mut self,
-        payload: &[u8],
-        _now: Timestamp,
-    ) -> std::result::Result<(), DeliveryError> {
+    fn deliver(&mut self, payload: &[u8], _now: Timestamp) -> std::result::Result<(), DeliveryError> {
         let samples = batch::decode(payload).map_err(|e| DeliveryError::Rejected(e.to_string()))?;
-        let r = self
-            .archive
-            .write(&samples)
-            .map_err(|e| DeliveryError::Unavailable(e.to_string()))?;
+        let r = self.archive.write(&samples).map_err(|e| DeliveryError::Unavailable(e.to_string()))?;
         self.rejected_points += r.rejected_out_of_order;
         Ok(())
     }
@@ -88,15 +77,9 @@ impl<S: Sink> OutageSink<S> {
 }
 
 impl<S: Sink> Sink for OutageSink<S> {
-    fn deliver(
-        &mut self,
-        payload: &[u8],
-        now: Timestamp,
-    ) -> std::result::Result<(), DeliveryError> {
+    fn deliver(&mut self, payload: &[u8], now: Timestamp) -> std::result::Result<(), DeliveryError> {
         if self.outages.iter().any(|&(a, b)| now >= a && now < b) {
-            return Err(DeliveryError::Unavailable(
-                "link down (scheduled outage)".into(),
-            ));
+            return Err(DeliveryError::Unavailable("link down (scheduled outage)".into()));
         }
         self.inner.deliver(payload, now)
     }
@@ -113,10 +96,7 @@ pub struct Backoff {
 
 impl Default for Backoff {
     fn default() -> Self {
-        Backoff {
-            initial_ms: 500,
-            max_ms: 30_000,
-        }
+        Backoff { initial_ms: 500, max_ms: 30_000 }
     }
 }
 
@@ -159,13 +139,7 @@ pub struct Forwarder {
 impl Forwarder {
     /// New forwarder over an open spool.
     pub fn new(spool: Spool, backoff: Backoff) -> Self {
-        Forwarder {
-            spool,
-            backoff,
-            delay_ms: 0,
-            next_attempt: Timestamp::MIN,
-            stats: ForwardStats::default(),
-        }
+        Forwarder { spool, backoff, delay_ms: 0, next_attempt: Timestamp::MIN, stats: ForwardStats::default() }
     }
 
     /// Spool a batch of samples. Returns `false` if the spool refused it (full).
@@ -176,21 +150,13 @@ impl Forwarder {
         let ok = self.spool.push(&batch::encode(samples))?;
         if ok {
             self.stats.enqueued += 1;
-            self.stats.max_backlog = self
-                .stats
-                .max_backlog
-                .max(self.spool.stats().pending_records);
+            self.stats.max_backlog = self.stats.max_backlog.max(self.spool.stats().pending_records);
         }
         Ok(ok)
     }
 
     /// Deliver up to `max_batches` if the backoff allows an attempt at `now`.
-    pub fn pump(
-        &mut self,
-        sink: &mut dyn Sink,
-        now: Timestamp,
-        max_batches: usize,
-    ) -> Result<PumpReport> {
+    pub fn pump(&mut self, sink: &mut dyn Sink, now: Timestamp, max_batches: usize) -> Result<PumpReport> {
         let mut report = PumpReport::default();
         if now < self.next_attempt {
             return Ok(report);
@@ -251,11 +217,7 @@ mod tests {
     }
 
     impl Sink for Recorder {
-        fn deliver(
-            &mut self,
-            payload: &[u8],
-            _now: Timestamp,
-        ) -> std::result::Result<(), DeliveryError> {
+        fn deliver(&mut self, payload: &[u8], _now: Timestamp) -> std::result::Result<(), DeliveryError> {
             if std::mem::take(&mut self.reject_next) {
                 return Err(DeliveryError::Rejected("bad".into()));
             }
@@ -265,49 +227,22 @@ mod tests {
     }
 
     fn sample(i: i64) -> Sample {
-        Sample {
-            tag: "t".into(),
-            kind: ValueKind::Analog,
-            point: Point::good(i, i as f64),
-        }
+        Sample { tag: "t".into(), kind: ValueKind::Analog, point: Point::good(i, i as f64) }
     }
 
     #[test]
     fn buffers_during_outage_then_drains_in_order_with_backoff() {
         let dir = tempfile::tempdir().unwrap();
-        let spool = Spool::open(
-            dir.path(),
-            SpoolOptions {
-                sync: SyncMode::Os,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let mut fwd = Forwarder::new(
-            spool,
-            Backoff {
-                initial_ms: 100,
-                max_ms: 400,
-            },
-        );
-        let mut sink = OutageSink::new(
-            Recorder {
-                got: vec![],
-                reject_next: false,
-            },
-            vec![(1000, 2000)],
-        );
+        let spool = Spool::open(dir.path(), SpoolOptions { sync: SyncMode::Os, ..Default::default() }).unwrap();
+        let mut fwd = Forwarder::new(spool, Backoff { initial_ms: 100, max_ms: 400 });
+        let mut sink = OutageSink::new(Recorder { got: vec![], reject_next: false }, vec![(1000, 2000)]);
         for i in 0..5 {
             fwd.enqueue(&[sample(i)]).unwrap();
         }
         assert!(fwd.enqueue(&[]).unwrap());
         let r = fwd.pump(&mut sink, 1000, 10).unwrap();
         assert!(r.link_failed);
-        assert_eq!(
-            fwd.pump(&mut sink, 1050, 10).unwrap(),
-            PumpReport::default(),
-            "inside backoff window"
-        );
+        assert_eq!(fwd.pump(&mut sink, 1050, 10).unwrap(), PumpReport::default(), "inside backoff window");
         fwd.pump(&mut sink, 1100, 10).unwrap(); // fails again, delay doubles to 200
         fwd.pump(&mut sink, 1300, 10).unwrap(); // 400
         fwd.pump(&mut sink, 1700, 10).unwrap(); // capped at 400
@@ -325,21 +260,11 @@ mod tests {
     #[test]
     fn rejected_batches_are_dead_lettered_not_retried() {
         let dir = tempfile::tempdir().unwrap();
-        let spool = Spool::open(
-            dir.path(),
-            SpoolOptions {
-                sync: SyncMode::Os,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let spool = Spool::open(dir.path(), SpoolOptions { sync: SyncMode::Os, ..Default::default() }).unwrap();
         let mut fwd = Forwarder::new(spool, Backoff::default());
         fwd.enqueue(&[sample(1)]).unwrap();
         fwd.enqueue(&[sample(2)]).unwrap();
-        let mut sink = Recorder {
-            got: vec![],
-            reject_next: true,
-        };
+        let mut sink = Recorder { got: vec![], reject_next: true };
         let r = fwd.pump(&mut sink, 0, 10).unwrap();
         assert_eq!((r.delivered, r.dead_lettered), (1, 1));
         assert_eq!(sink.got.len(), 1);
@@ -355,17 +280,8 @@ mod tests {
         sink.deliver(&payload, 0).unwrap();
         sink.deliver(&payload, 0).unwrap();
         assert_eq!(sink.rejected_points, 2);
-        assert!(matches!(
-            sink.deliver(b"junk", 0),
-            Err(DeliveryError::Rejected(_))
-        ));
-        assert_eq!(
-            DeliveryError::Unavailable("x".into()).to_string(),
-            "unavailable: x"
-        );
-        assert_eq!(
-            DeliveryError::Rejected("y".into()).to_string(),
-            "rejected: y"
-        );
+        assert!(matches!(sink.deliver(b"junk", 0), Err(DeliveryError::Rejected(_))));
+        assert_eq!(DeliveryError::Unavailable("x".into()).to_string(), "unavailable: x");
+        assert_eq!(DeliveryError::Rejected("y".into()).to_string(), "rejected: y");
     }
 }

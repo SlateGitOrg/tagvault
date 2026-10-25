@@ -22,11 +22,7 @@ use tagvault::timefmt::{format_time, now_ms, parse_duration, parse_time};
 use tagvault::{Error, Result};
 
 #[derive(Parser)]
-#[command(
-    name = "tagvault",
-    version,
-    about = "Industrial time-series historian for Sparkplug B plant telemetry"
-)]
+#[command(name = "tagvault", version, about = "Industrial time-series historian for Sparkplug B plant telemetry")]
 struct Cli {
     /// Increase log verbosity (-v info, -vv debug).
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -43,6 +39,8 @@ enum Cmd {
     Ingest(IngestArgs),
     /// Run a live Sparkplug host against an MQTT broker.
     Mqtt(MqttArgs),
+    /// Publish simulated Sparkplug edge nodes to an MQTT broker (honours rebirth commands).
+    EdgeSim(EdgeSimArgs),
     /// Serve the HTTP query/ingest API.
     Serve(ServeArgs),
     /// List tags.
@@ -185,6 +183,28 @@ struct MqttArgs {
 }
 
 #[derive(Args)]
+struct EdgeSimArgs {
+    /// Broker address host:port.
+    #[arg(long)]
+    broker: String,
+    /// Sparkplug group id.
+    #[arg(long, default_value = "Plant1")]
+    group: String,
+    /// Number of edge nodes.
+    #[arg(long, default_value_t = 1)]
+    nodes: usize,
+    /// Simulated seconds to publish.
+    #[arg(long, default_value_t = 60)]
+    seconds: u64,
+    /// Time compression: simulated seconds per wall-clock second.
+    #[arg(long, default_value_t = 1.0)]
+    speed: f64,
+    /// Random seed.
+    #[arg(long, default_value_t = 7)]
+    seed: u64,
+}
+
+#[derive(Args)]
 struct ServeArgs {
     /// Archive directory.
     #[arg(long)]
@@ -274,61 +294,33 @@ fn opt_num(v: Option<f64>) -> String {
 }
 
 fn archive_opts(policy: Policy) -> ArchiveOptions {
-    ArchiveOptions {
-        policy,
-        ..Default::default()
-    }
+    ArchiveOptions { policy, ..Default::default() }
 }
 
 fn default_spool(data: &Path, explicit: &Option<PathBuf>) -> PathBuf {
-    explicit
-        .clone()
-        .unwrap_or_else(|| data.parent().unwrap_or(Path::new(".")).join("spool"))
+    explicit.clone().unwrap_or_else(|| data.parent().unwrap_or(Path::new(".")).join("spool"))
 }
 
 /// Print up to `per_kind` events of each kind, then a count of the rest.
 fn print_events(events: &[HostEvent], per_kind: usize) {
-    let mut shown: std::collections::HashMap<&'static str, usize> =
-        std::collections::HashMap::new();
+    let mut shown: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
     let mut hidden = 0usize;
     for e in events {
         let (kind, line) = match e {
-            HostEvent::Discarded { .. }
-            | HostEvent::DeviceBirth { .. }
-            | HostEvent::DeviceDeath { .. } => continue,
-            HostEvent::NodeBirth {
-                node,
-                bd_seq,
-                metrics,
-            } => (
-                "birth",
-                format!(
-                    "[birth]   {node} bdSeq={} metrics={metrics}",
-                    bd_seq.unwrap_or(0)
-                ),
-            ),
-            HostEvent::NodeDeath { node } => (
-                "death",
-                format!("[death]   {node} → all its tags marked stale"),
-            ),
-            HostEvent::SequenceGap {
-                node,
-                expected,
-                got,
-            } => (
-                "gap",
-                format!("[gap]     {node} expected seq {expected}, got {got} → buffering"),
-            ),
-            HostEvent::GapRecovered { node, messages } => (
-                "reorder",
-                format!(
-                    "[reorder] {node} gap filled, {messages} buffered message(s) applied in order"
-                ),
-            ),
-            HostEvent::RebirthRequested { node, reason } => (
-                "rebirth",
-                format!("[rebirth] NCMD Node Control/Rebirth → {node} ({reason})"),
-            ),
+            HostEvent::Discarded { .. } | HostEvent::DeviceBirth { .. } | HostEvent::DeviceDeath { .. } => continue,
+            HostEvent::NodeBirth { node, bd_seq, metrics } => {
+                ("birth", format!("[birth]   {node} bdSeq={} metrics={metrics}", bd_seq.unwrap_or(0)))
+            }
+            HostEvent::NodeDeath { node } => ("death", format!("[death]   {node} → all its tags marked stale")),
+            HostEvent::SequenceGap { node, expected, got } => {
+                ("gap", format!("[gap]     {node} expected seq {expected}, got {got} → buffering"))
+            }
+            HostEvent::GapRecovered { node, messages } => {
+                ("reorder", format!("[reorder] {node} gap filled, {messages} buffered message(s) applied in order"))
+            }
+            HostEvent::RebirthRequested { node, reason } => {
+                ("rebirth", format!("[rebirth] NCMD Node Control/Rebirth → {node} ({reason})"))
+            }
         };
         let n = shown.entry(kind).or_default();
         if *n < per_kind {
@@ -347,14 +339,9 @@ fn cmd_simulate(a: SimulateArgs) -> Result<()> {
     let node_restart = if a.restart == "none" {
         None
     } else {
-        let (at, off) = a
-            .restart
-            .split_once(':')
-            .ok_or_else(|| Error::InvalidInput("--restart expects AT:OFFLINE".into()))?;
-        Some((
-            (parse_duration(at)? / 1000) as u64,
-            (parse_duration(off)? / 1000) as u64,
-        ))
+        let (at, off) =
+            a.restart.split_once(':').ok_or_else(|| Error::InvalidInput("--restart expects AT:OFFLINE".into()))?;
+        Some(((parse_duration(at)? / 1000) as u64, (parse_duration(off)? / 1000) as u64))
     };
     let sc = Scenario {
         seed: a.seed,
@@ -371,17 +358,8 @@ fn cmd_simulate(a: SimulateArgs) -> Result<()> {
     }
     write_capture(&a.out, &frames)?;
     let size = std::fs::metadata(&a.out)?.len();
-    println!(
-        "capture   {} ({} frames, {:.1} MB)",
-        a.out.display(),
-        frames.len(),
-        size as f64 / 1e6
-    );
-    println!(
-        "window    {} → {}",
-        format_time(sc.start),
-        format_time(sc.start + sc.duration_s as i64 * 1000)
-    );
+    println!("capture   {} ({} frames, {:.1} MB)", a.out.display(), frames.len(), size as f64 / 1e6);
+    println!("window    {} → {}", format_time(sc.start), format_time(sc.start + sc.duration_s as i64 * 1000));
     println!(
         "scenario  {} nodes × (Tank01, Reactor01); published {} msgs, lost {}, swapped {}, node restarts {}, rebirths honoured {}",
         sc.nodes, summary.published, summary.dropped, summary.swapped, summary.restarts, summary.rebirths
@@ -393,34 +371,18 @@ fn parse_outages(specs: &[String], origin: i64) -> Result<Vec<(i64, i64)>> {
     specs
         .iter()
         .map(|s| {
-            let (a, d) = s.split_once(':').ok_or_else(|| {
-                Error::InvalidInput(format!("--outage expects START:DURATION, got {s}"))
-            })?;
+            let (a, d) = s
+                .split_once(':')
+                .ok_or_else(|| Error::InvalidInput(format!("--outage expects START:DURATION, got {s}")))?;
             let start = origin + parse_duration(a)?;
             Ok((start, start + parse_duration(d)?))
         })
         .collect()
 }
 
-fn make_collector(
-    policy: &Policy,
-    spool_dir: &Path,
-    host: HostConfig,
-    sync: SyncMode,
-) -> Result<Collector> {
-    let spool = Spool::open(
-        spool_dir,
-        SpoolOptions {
-            sync,
-            ..Default::default()
-        },
-    )?;
-    Ok(Collector::new(
-        Host::new(host),
-        policy.clone(),
-        Forwarder::new(spool, Backoff::default()),
-        2000,
-    ))
+fn make_collector(policy: &Policy, spool_dir: &Path, host: HostConfig, sync: SyncMode) -> Result<Collector> {
+    let spool = Spool::open(spool_dir, SpoolOptions { sync, ..Default::default() })?;
+    Ok(Collector::new(Host::new(host), policy.clone(), Forwarder::new(spool, Backoff::default()), 2000))
 }
 
 fn cmd_ingest(a: IngestArgs) -> Result<()> {
@@ -431,11 +393,7 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
     let spool_dir = default_spool(&a.data, &a.spool);
     let mut collector = make_collector(&policy, &spool_dir, HostConfig::default(), a.sync.mode())?;
     collector.keep_events(a.events);
-    println!(
-        "replaying {} frames from {}",
-        frames.len(),
-        a.capture.display()
-    );
+    println!("replaying {} frames from {}", frames.len(), a.capture.display());
     for (s, e) in &outages {
         println!("  link outage {} → {}", format_time(*s), format_time(*e));
     }
@@ -446,13 +404,8 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
             (replay(&frames, &mut collector, &mut sink, 1000)?, None)
         }
         None => {
-            let mut archive = Archive::open(
-                &a.data,
-                ArchiveOptions {
-                    sync: a.sync.mode(),
-                    ..archive_opts(policy.clone())
-                },
-            )?;
+            let mut archive =
+                Archive::open(&a.data, ArchiveOptions { sync: a.sync.mode(), ..archive_opts(policy.clone()) })?;
             let (r, rej) = {
                 let mut sink = OutageSink::new(ArchiveSink::new(&mut archive), outages);
                 let r = replay(&frames, &mut collector, &mut sink, 1000)?;
@@ -469,8 +422,17 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
     let hs = collector.host_stats();
     let cs = collector.stats();
     let fs = collector.forwarder().stats();
-    println!("sparkplug  messages={} births={} deaths={} data={} seq_gaps={} reordered={} rebirth_requests={} discarded={}",
-        hs.messages, hs.births, hs.deaths, hs.data_messages, hs.seq_gaps, hs.reordered, hs.rebirth_requests, hs.discarded);
+    println!(
+        "sparkplug  messages={} births={} deaths={} data={} seq_gaps={} reordered={} rebirth_requests={} discarded={}",
+        hs.messages,
+        hs.births,
+        hs.deaths,
+        hs.data_messages,
+        hs.seq_gaps,
+        hs.reordered,
+        hs.rebirth_requests,
+        hs.discarded
+    );
     println!(
         "exception  samples_in={} reported={} ({:.1}% kept)",
         cs.samples_in,
@@ -501,18 +463,14 @@ fn cmd_ingest(a: IngestArgs) -> Result<()> {
 fn cmd_mqtt(a: MqttArgs) -> Result<()> {
     let policy = a.policy.load()?;
     let spool_dir = default_spool(&a.data, &a.spool);
-    let host_cfg = HostConfig {
-        host_id: a.host_id.clone(),
-        ..Default::default()
-    };
+    let host_cfg = HostConfig { host_id: a.host_id.clone(), ..Default::default() };
     let mut collector = make_collector(&policy, &spool_dir, host_cfg, SyncMode::Always)?;
-    let password =
-        match &a.password_env {
-            Some(var) => Some(std::env::var(var).map_err(|_| {
-                Error::InvalidInput(format!("environment variable {var} is not set"))
-            })?),
-            None => None,
-        };
+    let password = match &a.password_env {
+        Some(var) => Some(
+            std::env::var(var).map_err(|_| Error::InvalidInput(format!("environment variable {var} is not set")))?,
+        ),
+        None => None,
+    };
     let opts = MqttOptions {
         client_id: format!("tagvault-{}", a.host_id),
         keep_alive_s: 30,
@@ -526,18 +484,10 @@ fn cmd_mqtt(a: MqttArgs) -> Result<()> {
         password,
     };
     let mut client = MqttClient::connect(&a.broker, &opts)?;
-    let filter = if a.group == "#" {
-        "spBv1.0/#".to_string()
-    } else {
-        format!("spBv1.0/{}/#", a.group)
-    };
+    let filter = if a.group == "#" { "spBv1.0/#".to_string() } else { format!("spBv1.0/{}/#", a.group) };
     println!("connected to {}; subscribed to {filter}", a.broker);
-    let loop_opts = HostLoopOptions {
-        filter,
-        host_id: a.host_id,
-        tick: Duration::from_millis(500),
-        max_messages: a.max_messages,
-    };
+    let loop_opts =
+        HostLoopOptions { filter, host_id: a.host_id, tick: Duration::from_millis(500), max_messages: a.max_messages };
     let stop = AtomicBool::new(false);
     let handled = match &a.forward_to {
         Some(url) => {
@@ -548,74 +498,99 @@ fn cmd_mqtt(a: MqttArgs) -> Result<()> {
             let mut archive = Archive::open(&a.data, archive_opts(policy))?;
             let n = {
                 let mut sink: Box<dyn Sink + '_> = Box::new(ArchiveSink::new(&mut archive));
-                run_host(
-                    &mut client,
-                    &mut collector,
-                    sink.as_mut(),
-                    &loop_opts,
-                    &stop,
-                )?
+                run_host(&mut client, &mut collector, sink.as_mut(), &loop_opts, &stop)?
             };
             archive.close()?;
             n
         }
     };
     client.disconnect()?;
-    println!(
-        "handled {handled} messages; host stats: {:?}",
-        collector.host_stats()
-    );
+    println!("handled {handled} messages; host stats: {:?}", collector.host_stats());
+    Ok(())
+}
+
+fn cmd_edge_sim(a: EdgeSimArgs) -> Result<()> {
+    use tagvault::sim::EdgeNode;
+    if a.speed <= 0.0 {
+        return Err(Error::InvalidInput("--speed must be positive".into()));
+    }
+    let mut nodes: Vec<EdgeNode> = (0..a.nodes)
+        .map(|i| EdgeNode::plant_cell(&a.group, &format!("Line{}", i + 1), a.seed * 1000 + i as u64))
+        .collect();
+    // One MQTT session per edge node, each with its NDEATH as the will.
+    let mut clients = Vec::with_capacity(nodes.len());
+    let start = now_ms();
+    for node in &nodes {
+        let death = node.death_certificate(start);
+        let opts = MqttOptions {
+            client_id: format!("tagvault-edge-{}", node.edge()),
+            keep_alive_s: 30,
+            will: Some(Will { topic: death.topic, payload: death.payload, qos: 1, retain: false }),
+            username: None,
+            password: None,
+        };
+        let mut c = MqttClient::connect(&a.broker, &opts)?;
+        c.subscribe(&format!("spBv1.0/{}/NCMD/{}", node.group(), node.edge()))?;
+        clients.push(c);
+    }
+    let mut published = 0u64;
+    let mut rebirths = 0u64;
+    for (node, c) in nodes.iter_mut().zip(&mut clients) {
+        for m in node.birth(start) {
+            c.publish(&m.topic, &m.payload, 0, false)?;
+            published += 1;
+        }
+    }
+    let tick = Duration::from_secs_f64(1.0 / a.speed);
+    for k in 1..=a.seconds as i64 {
+        let now = start + k * 1000;
+        for (node, c) in nodes.iter_mut().zip(&mut clients) {
+            while let Some(msg) = c.poll(Duration::from_millis(1))? {
+                if node.command(&msg.topic, &msg.payload) {
+                    rebirths += 1;
+                }
+            }
+            for m in node.scan(now, 1.0) {
+                c.publish(&m.topic, &m.payload, 0, false)?;
+                published += 1;
+            }
+        }
+        std::thread::sleep(tick);
+    }
+    for c in clients {
+        c.disconnect()?;
+    }
+    println!("published {published} Sparkplug messages from {} node(s); rebirths honoured: {rebirths}", a.nodes);
     Ok(())
 }
 
 fn cmd_serve(a: ServeArgs) -> Result<()> {
-    let archive = Arc::new(RwLock::new(Archive::open(
-        &a.data,
-        archive_opts(a.policy.load()?),
-    )?));
+    let archive = Arc::new(RwLock::new(Archive::open(&a.data, archive_opts(a.policy.load()?))?));
     let server = ApiServer::bind(&a.listen)?;
-    let addr = server
-        .local_addr()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| a.listen.clone());
+    let addr = server.local_addr().map(|s| s.to_string()).unwrap_or_else(|| a.listen.clone());
     if let Some(f) = &a.addr_file {
         std::fs::write(f, &addr)?;
     }
-    println!(
-        "serving {} on http://{addr}/api/v1/ (Ctrl-C to stop)",
-        a.data.display()
-    );
+    println!("serving {} on http://{addr}/api/v1/ (Ctrl-C to stop)", a.data.display());
     server.run(archive, a.threads, Arc::new(AtomicBool::new(false)));
     Ok(())
 }
 
 /// Options for tools that only read: never rewrite stored settings.
 fn read_only() -> ArchiveOptions {
-    ArchiveOptions {
-        reconfigure_existing: false,
-        ..Default::default()
-    }
+    ArchiveOptions { reconfigure_existing: false, ..Default::default() }
 }
 
 fn cmd_tags(a: DataArgs) -> Result<()> {
     let archive = Archive::open(&a.data, read_only())?;
     let tags = archive.tags();
     if a.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&tags).map_err(|e| Error::InvalidInput(e.to_string()))?
-        );
+        println!("{}", serde_json::to_string_pretty(&tags).map_err(|e| Error::InvalidInput(e.to_string()))?);
         return Ok(());
     }
-    println!(
-        "{:<40} {:>8} {:>10} {:>9}  snapshot",
-        "tag", "kind", "archived", "comp_dev"
-    );
+    println!("{:<40} {:>8} {:>10} {:>9}  snapshot", "tag", "kind", "archived", "comp_dev");
     for t in tags {
-        let snap = t
-            .snapshot
-            .map(|p| format!("{:.3} @ {}", p.value, format_time(p.ts)))
-            .unwrap_or_else(|| "-".into());
+        let snap = t.snapshot.map(|p| format!("{:.3} @ {}", p.value, format_time(p.ts))).unwrap_or_else(|| "-".into());
         println!(
             "{:<40} {:>8} {:>10} {:>9}  {snap}",
             t.name,
@@ -632,8 +607,7 @@ fn cmd_query(a: QueryArgs) -> Result<()> {
     let now = now_ms();
     let (start, end) = (parse_time(&a.start, now)?, parse_time(&a.end, now)?);
     let series = archive.series(&a.tag, start, end)?;
-    let json =
-        |v: serde_json::Value| println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    let json = |v: serde_json::Value| println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     match a.kind {
         QueryKind::Raw => {
             let pts = query::raw(&series, start, end, a.limit);
@@ -641,20 +615,11 @@ fn cmd_query(a: QueryArgs) -> Result<()> {
                 Format::Json => json(serde_json::json!(pts)),
                 Format::Csv => {
                     println!("time,value,quality");
-                    pts.iter().for_each(|p| {
-                        println!("{},{},{:?}", format_time(p.ts), p.value, p.quality)
-                    });
+                    pts.iter().for_each(|p| println!("{},{},{:?}", format_time(p.ts), p.value, p.quality));
                 }
                 Format::Table => {
                     println!("{:<26} {:>12}  quality", "time", "value");
-                    pts.iter().for_each(|p| {
-                        println!(
-                            "{:<26} {:>12.4}  {:?}",
-                            format_time(p.ts),
-                            p.value,
-                            p.quality
-                        )
-                    });
+                    pts.iter().for_each(|p| println!("{:<26} {:>12.4}  {:?}", format_time(p.ts), p.value, p.quality));
                 }
             }
         }
@@ -665,18 +630,12 @@ fn cmd_query(a: QueryArgs) -> Result<()> {
                 Format::Csv => {
                     println!("time,value");
                     rows.iter().for_each(|r| {
-                        println!(
-                            "{},{}",
-                            format_time(r.ts),
-                            r.value.map(|v| v.to_string()).unwrap_or_default()
-                        )
+                        println!("{},{}", format_time(r.ts), r.value.map(|v| v.to_string()).unwrap_or_default())
                     });
                 }
                 Format::Table => {
                     println!("{:<26} {:>12}", "time", "value");
-                    rows.iter().for_each(|r| {
-                        println!("{:<26} {:>12}", format_time(r.ts), opt_num(r.value))
-                    });
+                    rows.iter().for_each(|r| println!("{:<26} {:>12}", format_time(r.ts), opt_num(r.value)));
                 }
             }
         }
@@ -746,11 +705,7 @@ fn cmd_verify(a: DataArgs) -> Result<()> {
 }
 
 fn cmd_bench(a: BenchArgs) -> Result<()> {
-    let cfg = if a.quick {
-        BenchConfig::quick()
-    } else {
-        BenchConfig::full()
-    };
+    let cfg = if a.quick { BenchConfig::quick() } else { BenchConfig::full() };
     std::fs::create_dir_all(&a.out)?;
     let scratch = a.out.join("scratch");
     if scratch.exists() {
@@ -765,10 +720,7 @@ fn cmd_bench(a: BenchArgs) -> Result<()> {
         serde_json::to_string_pretty(&report).map_err(|e| Error::InvalidInput(e.to_string()))?,
     )?;
     print!("{md}");
-    println!(
-        "\nwrote {} and bench.json",
-        a.out.join("bench.md").display()
-    );
+    println!("\nwrote {} and bench.json", a.out.join("bench.md").display());
     Ok(())
 }
 
@@ -784,6 +736,7 @@ fn main() -> ExitCode {
         Cmd::Simulate(a) => cmd_simulate(a),
         Cmd::Ingest(a) => cmd_ingest(a),
         Cmd::Mqtt(a) => cmd_mqtt(a),
+        Cmd::EdgeSim(a) => cmd_edge_sim(a),
         Cmd::Serve(a) => cmd_serve(a),
         Cmd::Tags(a) => cmd_tags(a),
         Cmd::Query(a) => cmd_query(a),

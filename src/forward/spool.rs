@@ -122,9 +122,7 @@ impl Spool {
     /// Open or create a spool directory.
     pub fn open(dir: &Path, opts: SpoolOptions) -> Result<Spool> {
         if opts.segment_bytes == 0 || opts.max_bytes < opts.segment_bytes {
-            return Err(Error::InvalidInput(
-                "spool max_bytes must be >= segment_bytes > 0".into(),
-            ));
+            return Err(Error::InvalidInput("spool max_bytes must be >= segment_bytes > 0".into()));
         }
         fs::create_dir_all(dir)?;
         let lock = crate::storage::lock_dir(dir)?;
@@ -150,44 +148,20 @@ impl Spool {
                 f.sync_all()?;
                 stats.truncated_bytes += torn as u64;
             }
-            segments.push_back(SegInfo {
-                id,
-                len: scan.valid_len as u64,
-                records: scan.frames.len() as u64,
-            });
+            segments.push_back(SegInfo { id, len: scan.valid_len as u64, records: scan.frames.len() as u64 });
         }
         if segments.is_empty() {
             File::create(dir.join(seg_name(1)))?;
-            segments.push_back(SegInfo {
-                id: 1,
-                len: 0,
-                records: 0,
-            });
+            segments.push_back(SegInfo { id: 1, len: 0, records: 0 });
         }
         let first = segments[0];
-        let mut cursor = read_cursor(dir)?.unwrap_or(Position {
-            segment: first.id,
-            offset: 0,
-        });
+        let mut cursor = read_cursor(dir)?.unwrap_or(Position { segment: first.id, offset: 0 });
         if cursor.segment < first.id {
-            cursor = Position {
-                segment: first.id,
-                offset: 0,
-            };
+            cursor = Position { segment: first.id, offset: 0 };
         }
         let tail_id = segments.back().expect("non-empty").id;
-        let tail = OpenOptions::new()
-            .append(true)
-            .open(dir.join(seg_name(tail_id)))?;
-        let mut spool = Spool {
-            dir: dir.to_path_buf(),
-            opts,
-            segments,
-            tail,
-            cursor,
-            stats,
-            _lock: lock,
-        };
+        let tail = OpenOptions::new().append(true).open(dir.join(seg_name(tail_id)))?;
+        let mut spool = Spool { dir: dir.to_path_buf(), opts, segments, tail, cursor, stats, _lock: lock };
         spool.stats.pending_records = spool.count_pending()?;
         Ok(spool)
     }
@@ -216,9 +190,7 @@ impl Spool {
         frame::encode(payload, &mut framed);
         let need = framed.len() as u64;
         if need > self.opts.max_bytes {
-            return Err(Error::InvalidInput(
-                "record larger than spool capacity".into(),
-            ));
+            return Err(Error::InvalidInput("record larger than spool capacity".into()));
         }
         while self.disk_bytes() + need > self.opts.max_bytes {
             match self.opts.overflow {
@@ -257,11 +229,7 @@ impl Spool {
         if self.opts.sync == SyncMode::Always {
             crate::storage::sync_dir(&self.dir)?;
         }
-        self.segments.push_back(SegInfo {
-            id,
-            len: 0,
-            records: 0,
-        });
+        self.segments.push_back(SegInfo { id, len: 0, records: 0 });
         Ok(())
     }
 
@@ -284,10 +252,7 @@ impl Spool {
         }
         let next = self.segments.front().expect("non-empty").id;
         if self.cursor.segment < next {
-            self.cursor = Position {
-                segment: next,
-                offset: 0,
-            };
+            self.cursor = Position { segment: next, offset: 0 };
             self.write_cursor()?;
         }
         Ok(())
@@ -300,11 +265,7 @@ impl Spool {
             if out.len() >= max {
                 break;
             }
-            let start = if s.id == self.cursor.segment {
-                self.cursor.offset
-            } else {
-                0
-            };
+            let start = if s.id == self.cursor.segment { self.cursor.offset } else { 0 };
             if start >= s.len {
                 continue;
             }
@@ -316,10 +277,7 @@ impl Spool {
                     break;
                 }
                 out.push(Entry {
-                    pos: Position {
-                        segment: s.id,
-                        offset: start + r.end as u64,
-                    },
+                    pos: Position { segment: s.id, offset: start + r.end as u64 },
                     payload: region[r].to_vec(),
                 });
             }
@@ -336,8 +294,8 @@ impl Spool {
         // Delete fully consumed non-tail segments.
         while self.segments.len() > 1 {
             let head = self.segments[0];
-            let consumed = head.id < self.cursor.segment
-                || (head.id == self.cursor.segment && self.cursor.offset >= head.len);
+            let consumed =
+                head.id < self.cursor.segment || (head.id == self.cursor.segment && self.cursor.offset >= head.len);
             if !consumed {
                 break;
             }
@@ -345,10 +303,7 @@ impl Spool {
             self.segments.pop_front();
             let next = self.segments[0].id;
             if self.cursor.segment < next {
-                self.cursor = Position {
-                    segment: next,
-                    offset: 0,
-                };
+                self.cursor = Position { segment: next, offset: 0 };
             }
         }
         self.write_cursor()?;
@@ -379,10 +334,7 @@ impl Spool {
 
     /// Counters.
     pub fn stats(&self) -> SpoolStats {
-        SpoolStats {
-            disk_bytes: self.disk_bytes(),
-            ..self.stats
-        }
+        SpoolStats { disk_bytes: self.disk_bytes(), ..self.stats }
     }
 
     /// True when nothing is waiting.
@@ -399,10 +351,7 @@ fn read_cursor(dir: &Path) -> Result<Option<Position>> {
         Err(e) => return Err(e.into()),
     };
     if buf.len() != 20 || crc32fast::hash(&buf[..16]).to_le_bytes() != buf[16..20] {
-        return Err(Error::Corrupt(format!(
-            "spool cursor {} is damaged",
-            path.display()
-        )));
+        return Err(Error::Corrupt(format!("spool cursor {} is damaged", path.display())));
     }
     let segment = u64::from_le_bytes(buf[0..8].try_into().expect("8"));
     let offset = u64::from_le_bytes(buf[8..16].try_into().expect("8"));
@@ -414,12 +363,7 @@ mod tests {
     use super::*;
 
     fn opts(seg: u64, max: u64, overflow: Overflow) -> SpoolOptions {
-        SpoolOptions {
-            segment_bytes: seg,
-            max_bytes: max,
-            overflow,
-            sync: SyncMode::Os,
-        }
+        SpoolOptions { segment_bytes: seg, max_bytes: max, overflow, sync: SyncMode::Os }
     }
 
     #[test]
@@ -447,24 +391,11 @@ mod tests {
         // Consumed segments were deleted (only the tail remains).
         let files = fs::read_dir(dir.path())
             .unwrap()
-            .filter(|e| {
-                e.as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(".q")
-            })
+            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".q"))
             .count();
         assert_eq!(files, 1);
         // Acking an older position is a no-op.
-        s.ack(
-            Position {
-                segment: 0,
-                offset: 0,
-            },
-            0,
-        )
-        .unwrap();
+        s.ack(Position { segment: 0, offset: 0 }, 0).unwrap();
     }
 
     #[test]

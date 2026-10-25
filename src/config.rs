@@ -115,11 +115,7 @@ impl Policy {
     /// Policy with uniform deviations for every tag.
     pub fn uniform(exc_dev: f64, comp_dev: f64) -> Policy {
         Policy {
-            defaults: TagSettings {
-                exc_dev: Some(exc_dev),
-                comp_dev: Some(comp_dev),
-                ..Default::default()
-            },
+            defaults: TagSettings { exc_dev: Some(exc_dev), comp_dev: Some(comp_dev), ..Default::default() },
             rules: Vec::new(),
         }
     }
@@ -130,9 +126,7 @@ impl Policy {
         for s in all {
             for d in [s.exc_dev, s.comp_dev].into_iter().flatten() {
                 if !d.is_finite() || d < 0.0 {
-                    return Err(Error::Config(format!(
-                        "deviation must be finite and >= 0, got {d}"
-                    )));
+                    return Err(Error::Config(format!("deviation must be finite and >= 0, got {d}")));
                 }
             }
             for m in [s.exc_max_ms, s.comp_max_ms].into_iter().flatten() {
@@ -148,12 +142,7 @@ impl Policy {
     pub fn resolve(&self, tag: &str) -> Resolved {
         let mut s = self.defaults.clone();
         let specificity = |r: &&Rule| r.pattern.bytes().filter(|&c| c != b'*').count();
-        if let Some(rule) = self
-            .rules
-            .iter()
-            .filter(|r| glob_match(&r.pattern, tag))
-            .max_by_key(specificity)
-        {
+        if let Some(rule) = self.rules.iter().filter(|r| glob_match(&r.pattern, tag)).max_by_key(specificity) {
             let o = &rule.settings;
             s.exc_dev = o.exc_dev.or(s.exc_dev);
             s.exc_max_ms = o.exc_max_ms.or(s.exc_max_ms);
@@ -189,10 +178,7 @@ mod tests {
         p.validate().unwrap();
         let r = p.resolve("P/Tank01/Level");
         assert_eq!(r.exception.dev, 0.5);
-        assert_eq!(
-            r.compression.dev, 0.2,
-            "only the most specific rule applies; others fall back to defaults"
-        );
+        assert_eq!(r.compression.dev, 0.2, "only the most specific rule applies; others fall back to defaults");
         assert_eq!(r.compression.max_ms, None);
         assert_eq!(r.compression.mode, SdtMode::Strict);
         assert_eq!(p.resolve("P/Flow").compression.mode, DEFAULT_MODE);
@@ -204,10 +190,7 @@ mod tests {
 
     #[test]
     fn glob_semantics() {
-        assert!(glob_match(
-            "Plant1/*/Tank01/Level",
-            "Plant1/Line2/Tank01/Level"
-        ));
+        assert!(glob_match("Plant1/*/Tank01/Level", "Plant1/Line2/Tank01/Level"));
         assert!(glob_match("*", ""));
         assert!(glob_match("a*b*c", "a/x/b/y/c"));
         assert!(glob_match("exact", "exact"));
@@ -221,13 +204,7 @@ mod tests {
     fn rejects_bad_values_and_unknown_fields() {
         assert!(Policy::uniform(-1.0, 0.0).validate().is_err());
         assert!(Policy::uniform(0.0, f64::NAN).validate().is_err());
-        let p = Policy {
-            defaults: TagSettings {
-                exc_max_ms: Some(-5),
-                ..Default::default()
-            },
-            rules: vec![],
-        };
+        let p = Policy { defaults: TagSettings { exc_max_ms: Some(-5), ..Default::default() }, rules: vec![] };
         assert!(p.validate().is_err());
         assert!(serde_json::from_str::<Policy>(r#"{"defaults":{"typo":1}}"#).is_err());
     }

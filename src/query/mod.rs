@@ -67,13 +67,7 @@ fn seg_value(kind: ValueKind, a: &Point, b: &Point, t: Timestamp) -> f64 {
 
 /// Stored points with `start <= ts <= end`, at most `limit`.
 pub fn raw(series: &Series, start: Timestamp, end: Timestamp, limit: usize) -> Vec<Point> {
-    series
-        .points
-        .iter()
-        .filter(|p| p.ts >= start && p.ts <= end)
-        .take(limit)
-        .copied()
-        .collect()
+    series.points.iter().filter(|p| p.ts >= start && p.ts <= end).take(limit).copied().collect()
 }
 
 /// Reconstructed value at `t`.
@@ -99,20 +93,13 @@ fn check_grid(start: Timestamp, end: Timestamp, step: i64) -> Result<u64> {
     }
     let rows = ((end - start) / step) as u64 + 1;
     if rows > MAX_ROWS {
-        return Err(Error::InvalidInput(format!(
-            "query would return {rows} rows (max {MAX_ROWS})"
-        )));
+        return Err(Error::InvalidInput(format!("query would return {rows} rows (max {MAX_ROWS})")));
     }
     Ok(rows)
 }
 
 /// Values at `start, start+step, … <= end`.
-pub fn interpolated(
-    series: &Series,
-    start: Timestamp,
-    end: Timestamp,
-    step: i64,
-) -> Result<Vec<InterpRow>> {
+pub fn interpolated(series: &Series, start: Timestamp, end: Timestamp, step: i64) -> Result<Vec<InterpRow>> {
     let rows = check_grid(start, end, step)?;
     let pts = &series.points;
     let mut out = Vec::with_capacity(rows as usize);
@@ -143,12 +130,7 @@ pub fn interpolated(
 
 /// Aggregates over consecutive intervals `[start + k·interval, start + (k+1)·interval)` covering
 /// `[start, end)`.
-pub fn aggregate(
-    series: &Series,
-    start: Timestamp,
-    end: Timestamp,
-    interval: i64,
-) -> Result<Vec<AggRow>> {
+pub fn aggregate(series: &Series, start: Timestamp, end: Timestamp, interval: i64) -> Result<Vec<AggRow>> {
     if end <= start {
         return Err(Error::InvalidInput("end must be after start".into()));
     }
@@ -199,9 +181,7 @@ pub fn aggregate(
         out.push(AggRow {
             start: a,
             end: b,
-            avg: (covered > 0)
-                .then(|| area / covered as f64)
-                .or(if has && count > 0 { Some(lo) } else { None }),
+            avg: (covered > 0).then(|| area / covered as f64).or(if has && count > 0 { Some(lo) } else { None }),
             min: has.then_some(lo),
             max: has.then_some(hi),
             count,
@@ -218,10 +198,7 @@ mod tests {
     use crate::types::Quality;
 
     fn series(kind: ValueKind, pts: &[(i64, f64)]) -> Series {
-        Series {
-            kind,
-            points: pts.iter().map(|&(t, v)| Point::good(t, v)).collect(),
-        }
+        Series { kind, points: pts.iter().map(|&(t, v)| Point::good(t, v)).collect() }
     }
 
     #[test]
@@ -236,18 +213,7 @@ mod tests {
         assert_eq!(value_at(&d, 9), Some(0.0));
         let rows = interpolated(&s, -5, 25, 5).unwrap();
         let vals: Vec<Option<f64>> = rows.iter().map(|r| r.value).collect();
-        assert_eq!(
-            vals,
-            vec![
-                None,
-                Some(0.0),
-                Some(5.0),
-                Some(10.0),
-                Some(5.0),
-                Some(0.0),
-                None
-            ]
-        );
+        assert_eq!(vals, vec![None, Some(0.0), Some(5.0), Some(10.0), Some(5.0), Some(0.0), None]);
         assert!(interpolated(&s, 0, 10, 0).is_err());
         assert!(interpolated(&s, 10, 0, 1).is_err());
         assert!(interpolated(&s, 0, i64::MAX / 2, 1).is_err());
@@ -292,20 +258,14 @@ mod tests {
 
     #[test]
     fn discrete_average_is_duty_cycle_and_isolated_point_counts() {
-        let d = series(
-            ValueKind::Discrete,
-            &[(0, 0.0), (30, 1.0), (40, 0.0), (100, 0.0)],
-        );
+        let d = series(ValueKind::Discrete, &[(0, 0.0), (30, 1.0), (40, 0.0), (100, 0.0)]);
         let agg = aggregate(&d, 0, 100, 100).unwrap();
         assert!((agg[0].avg.unwrap() - 0.1).abs() < 1e-12);
         assert_eq!((agg[0].min, agg[0].max), (Some(0.0), Some(1.0)));
         // A single point (no following segment) still yields min/max/count but zero coverage.
         let one = series(ValueKind::Analog, &[(50, 7.0)]);
         let agg = aggregate(&one, 0, 100, 100).unwrap();
-        assert_eq!(
-            (agg[0].avg, agg[0].min, agg[0].count, agg[0].coverage),
-            (Some(7.0), Some(7.0), 1, 0.0)
-        );
+        assert_eq!((agg[0].avg, agg[0].min, agg[0].count, agg[0].coverage), (Some(7.0), Some(7.0), 1, 0.0));
         let empty = series(ValueKind::Analog, &[]);
         let agg = aggregate(&empty, 0, 10, 5).unwrap();
         assert!(agg.iter().all(|r| r.avg.is_none() && r.min.is_none()));
@@ -313,10 +273,7 @@ mod tests {
 
     #[test]
     fn raw_filters_and_limits() {
-        let s = series(
-            ValueKind::Analog,
-            &[(0, 0.0), (10, 1.0), (20, 2.0), (30, 3.0)],
-        );
+        let s = series(ValueKind::Analog, &[(0, 0.0), (10, 1.0), (20, 2.0), (30, 3.0)]);
         assert_eq!(raw(&s, 5, 30, 10).len(), 3);
         assert_eq!(raw(&s, 0, 30, 2).len(), 2);
     }

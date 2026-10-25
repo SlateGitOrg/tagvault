@@ -30,14 +30,8 @@ fn plant_to_query_respects_combined_error_bound_through_an_outage() {
 
     let dir = common::tempdir();
     let policy = Policy::uniform(EXC, COMP);
-    let spool = Spool::open(
-        &dir.path().join("spool"),
-        SpoolOptions {
-            sync: SyncMode::Os,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let spool =
+        Spool::open(&dir.path().join("spool"), SpoolOptions { sync: SyncMode::Os, ..Default::default() }).unwrap();
     let mut collector = Collector::new(
         Host::new(scenario.host.clone()),
         policy.clone(),
@@ -46,40 +40,22 @@ fn plant_to_query_respects_combined_error_bound_through_an_outage() {
     );
     let mut archive = Archive::open(
         &dir.path().join("archive"),
-        ArchiveOptions {
-            sync: SyncMode::Os,
-            flush_points: 5_000,
-            policy: policy.clone(),
-            ..Default::default()
-        },
+        ArchiveOptions { sync: SyncMode::Os, flush_points: 5_000, policy: policy.clone(), ..Default::default() },
     )
     .unwrap();
     let outage = (scenario.start + 2_400_000, scenario.start + 3_600_000);
     let report = {
         let mut sink = OutageSink::new(ArchiveSink::new(&mut archive), vec![outage]);
         let r = replay(&frames, &mut collector, &mut sink, 1000).unwrap();
-        assert_eq!(
-            sink.into_inner().rejected_points,
-            0,
-            "no duplicates/out-of-order in a clean run"
-        );
+        assert_eq!(sink.into_inner().rejected_points, 0, "no duplicates/out-of-order in a clean run");
         r
     };
     assert!(report.link_failures > 0);
-    assert!(
-        report.max_backlog > 50,
-        "a 20-minute outage must build a backlog: {report:?}"
-    );
-    assert_eq!(
-        report.left_in_spool, 0,
-        "everything drains after the link returns"
-    );
+    assert!(report.max_backlog > 50, "a 20-minute outage must build a backlog: {report:?}");
+    assert_eq!(report.left_in_spool, 0, "everything drains after the link returns");
     assert!(report.commands >= 1);
     let cs = collector.stats();
-    assert!(
-        cs.samples_reported < cs.samples_in,
-        "exception filter must drop something"
-    );
+    assert!(cs.samples_reported < cs.samples_in, "exception filter must drop something");
 
     // Reference: every sample the host decoded, per tag.
     let mut host = Host::new(scenario.host.clone());
@@ -96,13 +72,10 @@ fn plant_to_query_respects_combined_error_bound_through_an_outage() {
     let mut archived = 0;
     for t in &tags {
         let pts = &raw[&t.name];
-        let series = archive
-            .series(&t.name, pts[0].ts, pts.last().unwrap().ts)
-            .unwrap();
+        let series = archive.series(&t.name, pts[0].ts, pts.last().unwrap().ts).unwrap();
         archived += t.archived_points;
         for p in pts.iter().filter(|p| p.quality.is_good()) {
-            let v = query::value_at(&series, p.ts)
-                .unwrap_or_else(|| panic!("{} undefined at {}", t.name, p.ts));
+            let v = query::value_at(&series, p.ts).unwrap_or_else(|| panic!("{} undefined at {}", t.name, p.ts));
             assert!(
                 (v - p.value).abs() <= bound,
                 "{} at {}: archive {v} vs raw {} (bound {bound})",
@@ -114,8 +87,5 @@ fn plant_to_query_respects_combined_error_bound_through_an_outage() {
         }
     }
     assert!(checked > 50_000, "checked {checked}");
-    assert!(
-        archived * 3 < checked as u64,
-        "end-to-end reduction should exceed 3x: {archived} / {checked}"
-    );
+    assert!(archived * 3 < checked as u64, "end-to-end reduction should exceed 3x: {archived} / {checked}");
 }

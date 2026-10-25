@@ -82,16 +82,9 @@ fn packet(header: u8, body: &[u8]) -> Vec<u8> {
 fn read_packet(stream: &mut TcpStream) -> Result<Option<(u8, Vec<u8>)>> {
     let mut first = [0u8; 1];
     match stream.read(&mut first) {
-        Ok(0) => {
-            return Err(Error::Io(std::io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "broker closed the connection",
-            )))
-        }
+        Ok(0) => return Err(Error::Io(std::io::Error::new(ErrorKind::UnexpectedEof, "broker closed the connection"))),
         Ok(_) => {}
-        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-            return Ok(None)
-        }
+        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => return Ok(None),
         Err(e) => return Err(e.into()),
     }
     // Once a packet has started, finish it with a generous timeout so we never lose framing.
@@ -112,9 +105,7 @@ fn read_packet(stream: &mut TcpStream) -> Result<Option<(u8, Vec<u8>)>> {
         }
     }
     if len > MAX_PACKET {
-        return Err(Error::Decode(format!(
-            "MQTT packet of {len} bytes exceeds limit"
-        )));
+        return Err(Error::Decode(format!("MQTT packet of {len} bytes exceeds limit")));
     }
     let mut body = vec![0u8; len];
     stream.read_exact(&mut body)?;
@@ -141,8 +132,7 @@ fn parse_publish(header: u8, body: &[u8]) -> Result<(Message, u8, Option<u16>)> 
     if body.len() < pos {
         return Err(Error::Decode("short PUBLISH topic".into()));
     }
-    let topic = String::from_utf8(body[2..pos].to_vec())
-        .map_err(|_| Error::Decode("non-UTF-8 topic".into()))?;
+    let topic = String::from_utf8(body[2..pos].to_vec()).map_err(|_| Error::Decode("non-UTF-8 topic".into()))?;
     let pid = if qos > 0 {
         if body.len() < pos + 2 {
             return Err(Error::Decode("short PUBLISH packet id".into()));
@@ -153,23 +143,14 @@ fn parse_publish(header: u8, body: &[u8]) -> Result<(Message, u8, Option<u16>)> 
     } else {
         None
     };
-    Ok((
-        Message {
-            topic,
-            payload: body[pos..].to_vec(),
-        },
-        qos,
-        pid,
-    ))
+    Ok((Message { topic, payload: body[pos..].to_vec() }, qos, pid))
 }
 
 impl MqttClient {
     /// Connect and wait for CONNACK.
     pub fn connect(addr: &str, opts: &MqttOptions) -> Result<MqttClient> {
-        let sock = addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| Error::InvalidInput(format!("cannot resolve {addr}")))?;
+        let sock =
+            addr.to_socket_addrs()?.next().ok_or_else(|| Error::InvalidInput(format!("cannot resolve {addr}")))?;
         let stream = TcpStream::connect_timeout(&sock, Duration::from_secs(10))?;
         stream.set_nodelay(true)?;
         let mut c = MqttClient {
@@ -240,9 +221,7 @@ impl MqttClient {
             if let Some((h, b)) = read_packet(&mut self.stream)? {
                 if h >> 4 == 9 {
                     if b.get(2) == Some(&0x80) {
-                        return Err(Error::InvalidInput(format!(
-                            "subscription to {filter} refused"
-                        )));
+                        return Err(Error::InvalidInput(format!("subscription to {filter} refused")));
                     }
                     return Ok(());
                 }
@@ -270,8 +249,7 @@ impl MqttClient {
         if !self.keep_alive.is_zero() && self.last_sent.elapsed() >= self.keep_alive / 2 {
             self.send(&[0xC0, 0x00])?;
         }
-        self.stream
-            .set_read_timeout(Some(timeout.max(Duration::from_millis(1))))?;
+        self.stream.set_read_timeout(Some(timeout.max(Duration::from_millis(1))))?;
         let Some((h, body)) = read_packet(&mut self.stream)? else {
             return Ok(None);
         };
@@ -378,16 +356,10 @@ mod tests {
         body.extend_from_slice(&7u16.to_be_bytes());
         body.extend_from_slice(b"xyz");
         let (m, qos, pid) = parse_publish(0x32, &body).unwrap();
-        assert_eq!(
-            (m.topic.as_str(), m.payload.as_slice(), qos, pid),
-            ("a/b", &b"xyz"[..], 1, Some(7))
-        );
+        assert_eq!((m.topic.as_str(), m.payload.as_slice(), qos, pid), ("a/b", &b"xyz"[..], 1, Some(7)));
         assert!(parse_publish(0x30, &[0]).is_err());
         assert!(parse_publish(0x30, &[0, 9, b'a']).is_err());
         assert!(parse_publish(0x32, &[0, 1, b'a', 0]).is_err());
-        assert_eq!(
-            state_payload(true, 5),
-            br#"{"online":true,"timestamp":5}"#.to_vec()
-        );
+        assert_eq!(state_payload(true, 5), br#"{"online":true,"timestamp":5}"#.to_vec());
     }
 }

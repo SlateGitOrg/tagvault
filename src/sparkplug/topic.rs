@@ -62,10 +62,7 @@ impl MessageType {
 
     /// True for the device-scoped types, which require a device id.
     pub fn is_device(self) -> bool {
-        matches!(
-            self,
-            MessageType::DBirth | MessageType::DDeath | MessageType::DData | MessageType::DCmd
-        )
+        matches!(self, MessageType::DBirth | MessageType::DDeath | MessageType::DData | MessageType::DCmd)
     }
 }
 
@@ -113,32 +110,17 @@ impl Topic {
         if kind.is_device() != device.is_some() {
             return Err(bad());
         }
-        Ok(Topic {
-            kind,
-            group: parts[1].to_string(),
-            edge: parts[3].to_string(),
-            device,
-        })
+        Ok(Topic { kind, group: parts[1].to_string(), edge: parts[3].to_string(), device })
     }
 
     /// Build a node-scoped topic.
     pub fn node(kind: MessageType, group: &str, edge: &str) -> Topic {
-        Topic {
-            kind,
-            group: group.into(),
-            edge: edge.into(),
-            device: None,
-        }
+        Topic { kind, group: group.into(), edge: edge.into(), device: None }
     }
 
     /// Build a device-scoped topic.
     pub fn device(kind: MessageType, group: &str, edge: &str, device: &str) -> Topic {
-        Topic {
-            kind,
-            group: group.into(),
-            edge: edge.into(),
-            device: Some(device.into()),
-        }
+        Topic { kind, group: group.into(), edge: edge.into(), device: Some(device.into()) }
     }
 }
 
@@ -147,13 +129,7 @@ impl fmt::Display for Topic {
         if self.kind == MessageType::State {
             return write!(f, "{NAMESPACE}/STATE/{}", self.edge);
         }
-        write!(
-            f,
-            "{NAMESPACE}/{}/{}/{}",
-            self.group,
-            self.kind.as_str(),
-            self.edge
-        )?;
+        write!(f, "{NAMESPACE}/{}/{}/{}", self.group, self.kind.as_str(), self.edge)?;
         if let Some(d) = &self.device {
             write!(f, "/{d}")?;
         }
@@ -172,20 +148,14 @@ mod tests {
         assert_eq!(t.group, "Sparkplug B Devices");
         assert_eq!(t.edge, "Raspberry Pi");
         assert_eq!(t.device.as_deref(), Some("Pibrella"));
-        assert_eq!(
-            t.to_string(),
-            "spBv1.0/Sparkplug B Devices/DDATA/Raspberry Pi/Pibrella"
-        );
+        assert_eq!(t.to_string(), "spBv1.0/Sparkplug B Devices/DDATA/Raspberry Pi/Pibrella");
 
         let n = Topic::parse("spBv1.0/G1/NBIRTH/E1").unwrap();
         assert_eq!(n, Topic::node(MessageType::NBirth, "G1", "E1"));
         let s = Topic::parse("spBv1.0/STATE/scada-host").unwrap();
         assert_eq!(s.kind, MessageType::State);
         assert_eq!(s.to_string(), "spBv1.0/STATE/scada-host");
-        assert_eq!(
-            Topic::device(MessageType::DCmd, "G", "E", "D").to_string(),
-            "spBv1.0/G/DCMD/E/D"
-        );
+        assert_eq!(Topic::device(MessageType::DCmd, "G", "E", "D").to_string(), "spBv1.0/G/DCMD/E/D");
         for k in ["NDEATH", "DBIRTH", "DDEATH", "NDATA", "NCMD"] {
             let dev = if k.starts_with('D') { "/D" } else { "" };
             let t = Topic::parse(&format!("spBv1.0/G/{k}/E{dev}")).unwrap();

@@ -26,34 +26,19 @@ fn signal(with_bad: bool) -> impl Strategy<Value = Vec<Point>> {
                 5..=60 => v += r * 0.5, // drift
                 _ => v += r * 0.05,     // noise
             }
-            let q = if with_bad && kind == 99 {
-                Quality::Bad
-            } else {
-                Quality::Good
-            };
-            out.push(Point::with_quality(
-                ts,
-                if q.is_good() { v } else { f64::NAN },
-                q,
-            ));
+            let q = if with_bad && kind == 99 { Quality::Bad } else { Quality::Good };
+            out.push(Point::with_quality(ts, if q.is_good() { v } else { f64::NAN }, q));
         }
         out
     })
 }
 
 fn lin(points: Vec<Point>) -> Series {
-    Series {
-        kind: ValueKind::Analog,
-        points,
-    }
+    Series { kind: ValueKind::Analog, points }
 }
 
 fn tol(dev: f64, pts: &[Point]) -> f64 {
-    let scale = pts
-        .iter()
-        .filter(|p| p.value.is_finite())
-        .map(|p| p.value.abs())
-        .fold(1.0, f64::max);
+    let scale = pts.iter().filter(|p| p.value.is_finite()).map(|p| p.value.abs()).fold(1.0, f64::max);
     dev + 1e-9 * scale
 }
 
