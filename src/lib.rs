@@ -21,6 +21,7 @@ pub mod compress;
 pub mod config;
 pub mod encoding;
 pub mod error;
+pub mod forward;
 pub mod query;
 pub mod sparkplug;
 pub mod storage;
