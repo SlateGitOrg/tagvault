@@ -50,6 +50,7 @@ Rulings made while building tagvault without access to the requester. Each entry
 
 - Ruling: queries never extrapolate past the last point (the snapshot); values are undefined there — honest about what is known — dashboards that expect a held last value must ask for raw points.
 - Ruling: the time-weighted average divides by covered time and reports `coverage` — avoids treating bad or unknown periods as zero — consumers must look at `coverage`.
+- Ruling: time arithmetic on user input is checked, never wrapping — query spans are measured in i128 and rejected above the 100 000-row cap, grid stepping stops (interpolated) or clips to `end` (aggregate) instead of overflowing, and relative times / outage windows outside the i64 range are input errors — release builds have overflow checks off, so a wrapped span once let one request loop ~2^64 times (review fix round 1) — none; every timestamp inside the i64 range stays queryable.
 - Ruling: the HTTP server (tiny_http) has no authentication and binds to `127.0.0.1:8080` by default — scope; this is a local tool — exposing it on a network exposes plant data and an ingest endpoint (listed in Limitations).
 
 ## Engineering
