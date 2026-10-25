@@ -20,6 +20,7 @@
 pub mod compress;
 pub mod encoding;
 pub mod error;
+pub mod sparkplug;
 pub mod types;
 
 pub use error::{Error, Result};
