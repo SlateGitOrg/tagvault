@@ -1,0 +1,7 @@
+/target
+/out
+/demo-data
+*.profraw
+*.profdata
+lcov.info
+.DS_Store
