@@ -46,7 +46,10 @@ fn ok(body: Value) -> Response {
 }
 
 fn err(status: u16, msg: impl Into<String>) -> Response {
-    Response { status, body: json!({ "error": msg.into() }) }
+    Response {
+        status,
+        body: json!({ "error": msg.into() }),
+    }
 }
 
 fn percent_decode(s: &str) -> String {
@@ -96,7 +99,10 @@ struct Params(HashMap<String, String>);
 
 impl Params {
     fn get(&self, k: &str) -> Result<&str> {
-        self.0.get(k).map(|s| s.as_str()).ok_or_else(|| Error::InvalidInput(format!("missing parameter {k:?}")))
+        self.0
+            .get(k)
+            .map(|s| s.as_str())
+            .ok_or_else(|| Error::InvalidInput(format!("missing parameter {k:?}")))
     }
     fn time(&self, k: &str, now: Timestamp) -> Result<Timestamp> {
         parse_time(self.get(k)?, now)
@@ -116,41 +122,79 @@ fn to_response(r: Result<Value>) -> Response {
 }
 
 /// Route one request. `now` resolves relative times.
-pub fn route(archive: &RwLock<Archive>, method: &str, url: &str, body: &[u8], now: Timestamp) -> Response {
+pub fn route(
+    archive: &RwLock<Archive>,
+    method: &str,
+    url: &str,
+    body: &[u8],
+    now: Timestamp,
+) -> Response {
     let (path, q) = url.split_once('?').unwrap_or((url, ""));
     let p = Params(parse_query(q));
-    let read = || archive.read().map_err(|_| Error::Corrupt("archive lock poisoned".into()));
+    let read = || {
+        archive
+            .read()
+            .map_err(|_| Error::Corrupt("archive lock poisoned".into()))
+    };
     match (method, path) {
         ("GET", "/api/v1/health") => ok(json!({ "status": "ok" })),
         ("GET", "/api/v1/tags") => to_response(read().map(|a| json!(a.tags()))),
         ("GET", "/api/v1/stats") => to_response(read().map(|a| json!(a.stats()))),
         ("GET", "/api/v1/raw") => to_response((|| {
             let (tag, start, end) = (p.get("tag")?, p.time("start", now)?, p.time("end", now)?);
-            let limit = p.0.get("limit").map(|l| l.parse::<usize>()).transpose().map_err(|_| Error::InvalidInput("bad limit".into()))?;
+            let limit =
+                p.0.get("limit")
+                    .map(|l| l.parse::<usize>())
+                    .transpose()
+                    .map_err(|_| Error::InvalidInput("bad limit".into()))?;
             let series = read()?.series(tag, start, end)?;
-            let pts = query::raw(&series, start, end, limit.unwrap_or(10_000).min(query::MAX_ROWS as usize));
+            let pts = query::raw(
+                &series,
+                start,
+                end,
+                limit.unwrap_or(10_000).min(query::MAX_ROWS as usize),
+            );
             Ok(json!({ "tag": tag, "points": pts.iter().map(point_json).collect::<Vec<_>>() }))
         })()),
         ("GET", "/api/v1/interpolated") => to_response((|| {
-            let (tag, start, end, step) = (p.get("tag")?, p.time("start", now)?, p.time("end", now)?, p.duration("step")?);
+            let (tag, start, end, step) = (
+                p.get("tag")?,
+                p.time("start", now)?,
+                p.time("end", now)?,
+                p.duration("step")?,
+            );
             let series = read()?.series(tag, start, end)?;
             let rows = query::interpolated(&series, start, end, step)?;
             Ok(json!({ "tag": tag, "rows": rows }))
         })()),
         ("GET", "/api/v1/aggregate") => to_response((|| {
-            let (tag, start, end, interval) = (p.get("tag")?, p.time("start", now)?, p.time("end", now)?, p.duration("interval")?);
+            let (tag, start, end, interval) = (
+                p.get("tag")?,
+                p.time("start", now)?,
+                p.time("end", now)?,
+                p.duration("interval")?,
+            );
             let series = read()?.series(tag, start, end)?;
             let rows = query::aggregate(&series, start, end, interval)?;
             Ok(json!({ "tag": tag, "rows": rows }))
         })()),
         ("POST", "/api/v1/ingest") => to_response((|| {
             let samples = batch::decode(body)?;
-            let mut a = archive.write().map_err(|_| Error::Corrupt("archive lock poisoned".into()))?;
+            let mut a = archive
+                .write()
+                .map_err(|_| Error::Corrupt("archive lock poisoned".into()))?;
             Ok(json!(a.write(&samples)?))
         })()),
-        (_, "/api/v1/health" | "/api/v1/tags" | "/api/v1/stats" | "/api/v1/raw" | "/api/v1/interpolated" | "/api/v1/aggregate" | "/api/v1/ingest") => {
-            err(405, "method not allowed")
-        }
+        (
+            _,
+            "/api/v1/health"
+            | "/api/v1/tags"
+            | "/api/v1/stats"
+            | "/api/v1/raw"
+            | "/api/v1/interpolated"
+            | "/api/v1/aggregate"
+            | "/api/v1/ingest",
+        ) => err(405, "method not allowed"),
         _ => err(404, "not found"),
     }
 }
@@ -163,8 +207,11 @@ pub struct ApiServer {
 impl ApiServer {
     /// Bind to `addr` (e.g. `127.0.0.1:8080`; port 0 picks a free port).
     pub fn bind(addr: &str) -> Result<ApiServer> {
-        let server = tiny_http::Server::http(addr).map_err(|e| Error::InvalidInput(format!("cannot bind {addr}: {e}")))?;
-        Ok(ApiServer { server: Arc::new(server) })
+        let server = tiny_http::Server::http(addr)
+            .map_err(|e| Error::InvalidInput(format!("cannot bind {addr}: {e}")))?;
+        Ok(ApiServer {
+            server: Arc::new(server),
+        })
     }
 
     /// The bound socket address.
@@ -181,12 +228,20 @@ impl ApiServer {
                 let stop = Arc::clone(&stop);
                 std::thread::spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
-                        let Ok(Some(mut req)) = server.recv_timeout(Duration::from_millis(200)) else { continue };
+                        let Ok(Some(mut req)) = server.recv_timeout(Duration::from_millis(200))
+                        else {
+                            continue;
+                        };
                         let method = req.method().as_str().to_string();
                         let url = req.url().to_string();
                         let mut body = Vec::new();
                         let too_big = req.body_length().is_some_and(|l| l > MAX_BODY);
-                        let read_ok = !too_big && req.as_reader().take(MAX_BODY as u64 + 1).read_to_end(&mut body).is_ok();
+                        let read_ok = !too_big
+                            && req
+                                .as_reader()
+                                .take(MAX_BODY as u64 + 1)
+                                .read_to_end(&mut body)
+                                .is_ok();
                         let resp = if too_big || body.len() > MAX_BODY {
                             err(413, "body too large")
                         } else if !read_ok {
@@ -195,8 +250,14 @@ impl ApiServer {
                             route(&archive, &method, &url, &body, now_ms())
                         };
                         log::debug!("{method} {url} -> {}", resp.status);
-                        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
-                        let r = tiny_http::Response::from_string(resp.body.to_string()).with_status_code(resp.status).with_header(header);
+                        let header = tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/json"[..],
+                        )
+                        .expect("static header");
+                        let r = tiny_http::Response::from_string(resp.body.to_string())
+                            .with_status_code(resp.status)
+                            .with_header(header);
                         if let Err(e) = req.respond(r) {
                             log::debug!("client went away: {e}");
                         }
@@ -220,11 +281,20 @@ pub struct HttpSink {
 impl HttpSink {
     /// `target` is `http://host:port` or `host:port`.
     pub fn new(target: &str) -> Result<HttpSink> {
-        let addr = target.strip_prefix("http://").unwrap_or(target).trim_end_matches('/').to_string();
+        let addr = target
+            .strip_prefix("http://")
+            .unwrap_or(target)
+            .trim_end_matches('/')
+            .to_string();
         if addr.contains('/') || !addr.contains(':') {
-            return Err(Error::InvalidInput(format!("expected http://host:port, got {target:?}")));
+            return Err(Error::InvalidInput(format!(
+                "expected http://host:port, got {target:?}"
+            )));
         }
-        Ok(HttpSink { addr, timeout: Duration::from_secs(10) })
+        Ok(HttpSink {
+            addr,
+            timeout: Duration::from_secs(10),
+        })
     }
 
     fn post(&self, body: &[u8]) -> std::io::Result<u16> {
@@ -249,12 +319,18 @@ impl HttpSink {
         line.split_whitespace()
             .nth(1)
             .and_then(|c| c.parse().ok())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad HTTP status line"))
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "bad HTTP status line")
+            })
     }
 }
 
 impl Sink for HttpSink {
-    fn deliver(&mut self, payload: &[u8], _now: Timestamp) -> std::result::Result<(), DeliveryError> {
+    fn deliver(
+        &mut self,
+        payload: &[u8],
+        _now: Timestamp,
+    ) -> std::result::Result<(), DeliveryError> {
         match self.post(payload) {
             Ok(200..=299) => Ok(()),
             Ok(code @ 400..=499) => Err(DeliveryError::Rejected(format!("HTTP {code}"))),

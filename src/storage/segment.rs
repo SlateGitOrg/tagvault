@@ -91,7 +91,8 @@ pub fn decode_chunk(buf: &[u8]) -> Result<Vec<Point>> {
     let nruns = c.uvarint()? as usize;
     let mut qualities = Vec::with_capacity(ts.len());
     for _ in 0..nruns {
-        let q = Quality::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad quality code".into()))?;
+        let q =
+            Quality::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad quality code".into()))?;
         let n = c.uvarint()? as usize;
         if qualities.len() + n > ts.len() {
             return Err(Error::Corrupt("quality runs exceed chunk length".into()));
@@ -101,14 +102,21 @@ pub fn decode_chunk(buf: &[u8]) -> Result<Vec<Point>> {
     if qualities.len() != ts.len() {
         return Err(Error::Corrupt("quality runs shorter than chunk".into()));
     }
-    Ok(ts.into_iter().zip(vals).zip(qualities).map(|((ts, value), quality)| Point { ts, value, quality }).collect())
+    Ok(ts
+        .into_iter()
+        .zip(vals)
+        .zip(qualities)
+        .map(|((ts, value), quality)| Point { ts, value, quality })
+        .collect())
 }
 
 fn bounds(points: &[Point]) -> (f64, f64) {
     points
         .iter()
         .filter(|p| p.quality.is_good() && p.value.is_finite())
-        .fold((f64::NAN, f64::NAN), |(lo, hi), p| (lo.min(p.value), hi.max(p.value)))
+        .fold((f64::NAN, f64::NAN), |(lo, hi), p| {
+            (lo.min(p.value), hi.max(p.value))
+        })
 }
 
 /// File name for segment `id`.
@@ -118,7 +126,10 @@ pub fn file_name(id: u64) -> String {
 
 /// Parse a segment id out of a file name produced by [`file_name`].
 pub fn parse_file_name(name: &str) -> Option<u64> {
-    name.strip_prefix("seg-")?.strip_suffix(".tvs")?.parse().ok()
+    name.strip_prefix("seg-")?
+        .strip_suffix(".tvs")?
+        .parse()
+        .ok()
 }
 
 /// An open, immutable segment.
@@ -183,13 +194,23 @@ impl Segment {
         fs::rename(&tmp, &path)?;
         sync_dir(dir)?;
         let file = File::open(&path)?;
-        Ok(Segment { id, path, file, size: body.len() as u64, chunks: metas })
+        Ok(Segment {
+            id,
+            path,
+            file,
+            size: body.len() as u64,
+            chunks: metas,
+        })
     }
 
     /// Open and validate a segment's footer and index.
     pub fn open(path: &Path) -> Result<Segment> {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        let id = parse_file_name(name).ok_or_else(|| Error::Corrupt(format!("bad segment name {name}")))?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let id = parse_file_name(name)
+            .ok_or_else(|| Error::Corrupt(format!("bad segment name {name}")))?;
         let file = File::open(path)?;
         let size = file.metadata()?.len();
         let corrupt = |why: &str| Error::Corrupt(format!("segment {}: {why}", path.display()));
@@ -205,7 +226,7 @@ impl Segment {
         }
         let index_len = u32::from_le_bytes(tail[0..4].try_into().expect("4")) as u64;
         let index_crc = u32::from_le_bytes(tail[4..8].try_into().expect("4"));
-        if index_len % INDEX_ENTRY as u64 != 0 || index_len + 24 > size {
+        if !index_len.is_multiple_of(INDEX_ENTRY as u64) || index_len + 24 > size {
             return Err(corrupt("bad index length"));
         }
         let mut index = vec![0u8; index_len as usize];
@@ -233,7 +254,13 @@ impl Segment {
             }
             chunks.push(m);
         }
-        Ok(Segment { id, path: path.to_path_buf(), file, size, chunks })
+        Ok(Segment {
+            id,
+            path: path.to_path_buf(),
+            file,
+            size,
+            chunks,
+        })
     }
 
     /// Read and decode one chunk, verifying its checksum.
@@ -241,7 +268,10 @@ impl Segment {
         let mut buf = vec![0u8; meta.len as usize];
         self.file.read_exact_at(&mut buf, meta.offset)?;
         if crc32fast::hash(&buf) != meta.crc {
-            return Err(Error::Corrupt(format!("segment {}: chunk checksum mismatch", self.path.display())));
+            return Err(Error::Corrupt(format!(
+                "segment {}: chunk checksum mismatch",
+                self.path.display()
+            )));
         }
         let pts = decode_chunk(&buf)?;
         if pts.len() != meta.count as usize {
@@ -313,7 +343,10 @@ mod tests {
         bytes[meta.offset as usize + 3] ^= 0xff;
         fs::write(&path, &bytes).unwrap();
         let s = Segment::open(&path).unwrap();
-        assert!(s.read_chunk(&meta).is_err(), "chunk crc must catch payload damage");
+        assert!(
+            s.read_chunk(&meta).is_err(),
+            "chunk crc must catch payload damage"
+        );
 
         let n = bytes.len();
         bytes[n - 20] ^= 0xff; // inside the index

@@ -119,5 +119,8 @@ pub mod wire {
 
 /// Unique scratch directory under the system temp dir, removed on drop.
 pub fn tempdir() -> tempfile::TempDir {
-    tempfile::Builder::new().prefix("tagvault-test-").tempdir().expect("tempdir")
+    tempfile::Builder::new()
+        .prefix("tagvault-test-")
+        .tempdir()
+        .expect("tempdir")
 }

@@ -21,7 +21,11 @@ use tagvault::{Point, Sample, ValueKind};
 
 fn http_get(addr: &str, path: &str) -> (u16, Value) {
     let mut s = TcpStream::connect(addr).unwrap();
-    write!(s, "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").unwrap();
+    write!(
+        s,
+        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     let status = resp.split_whitespace().nth(1).unwrap().parse().unwrap();
@@ -31,14 +35,29 @@ fn http_get(addr: &str, path: &str) -> (u16, Value) {
 
 fn samples(n: i64) -> Vec<Sample> {
     (0..n)
-        .map(|i| Sample { tag: "Plant1/Line1/Tank01/Level".into(), kind: ValueKind::Analog, point: Point::good(1_767_571_200_000 + i * 1000, (i as f64 / 30.0).sin() * 10.0 + 50.0) })
+        .map(|i| Sample {
+            tag: "Plant1/Line1/Tank01/Level".into(),
+            kind: ValueKind::Analog,
+            point: Point::good(
+                1_767_571_200_000 + i * 1000,
+                (i as f64 / 30.0).sin() * 10.0 + 50.0,
+            ),
+        })
         .collect()
 }
 
 #[test]
 fn http_api_ingest_and_queries() {
     let dir = common::tempdir();
-    let archive = Archive::open(dir.path(), ArchiveOptions { sync: SyncMode::Os, policy: Policy::uniform(0.0, 0.05), ..Default::default() }).unwrap();
+    let archive = Archive::open(
+        dir.path(),
+        ArchiveOptions {
+            sync: SyncMode::Os,
+            policy: Policy::uniform(0.0, 0.05),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let archive = Arc::new(RwLock::new(archive));
     let server = ApiServer::bind("127.0.0.1:0").unwrap();
     let addr = server.local_addr().unwrap().to_string();
@@ -56,11 +75,19 @@ fn http_api_ingest_and_queries() {
     assert_eq!(st, 200);
     assert_eq!(tags[0]["name"], "Plant1/Line1/Tank01/Level");
     let tag = "Plant1%2FLine1%2FTank01%2FLevel";
-    let (st, raw) = http_get(&addr, &format!("/api/v1/raw?tag={tag}&start=2026-01-05T00:00:00Z&end=2026-01-05T00:10:00Z&limit=5"));
+    let (st, raw) = http_get(
+        &addr,
+        &format!(
+            "/api/v1/raw?tag={tag}&start=2026-01-05T00:00:00Z&end=2026-01-05T00:10:00Z&limit=5"
+        ),
+    );
     assert_eq!(st, 200);
     assert_eq!(raw["points"].as_array().unwrap().len(), 5);
     assert_eq!(raw["points"][0]["time"], "2026-01-05T00:00:00.000Z");
-    let (st, interp) = http_get(&addr, &format!("/api/v1/interpolated?tag={tag}&start=1767571200000&end=1767571800000&step=1m"));
+    let (st, interp) = http_get(
+        &addr,
+        &format!("/api/v1/interpolated?tag={tag}&start=1767571200000&end=1767571800000&step=1m"),
+    );
     assert_eq!(st, 200);
     assert_eq!(interp["rows"].as_array().unwrap().len(), 11);
     let (st, agg) = http_get(&addr, &format!("/api/v1/aggregate?tag={tag}&start=2026-01-05T00:00:00Z&end=2026-01-05T00:10:00Z&interval=5m"));
@@ -73,12 +100,22 @@ fn http_api_ingest_and_queries() {
     assert_eq!(http_get(&addr, "/api/v1/health").0, 200);
     assert_eq!(http_get(&addr, "/api/v1/raw?tag=nope&start=0&end=1").0, 404);
     assert_eq!(http_get(&addr, "/api/v1/raw?tag=x").0, 400);
-    assert_eq!(http_get(&addr, &format!("/api/v1/interpolated?tag={tag}&start=0&end=1&step=0")).0, 400);
+    assert_eq!(
+        http_get(
+            &addr,
+            &format!("/api/v1/interpolated?tag={tag}&start=0&end=1&step=0")
+        )
+        .0,
+        400
+    );
     assert_eq!(http_get(&addr, "/nope").0, 404);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     handle.join().unwrap();
     // Method checks via the pure router.
-    assert_eq!(route(&archive, "DELETE", "/api/v1/tags", b"", 0).status, 405);
+    assert_eq!(
+        route(&archive, "DELETE", "/api/v1/tags", b"", 0).status,
+        405
+    );
 }
 
 /// Read one MQTT packet (header byte, body) from the fake broker's socket.
@@ -145,7 +182,8 @@ fn mqtt_host_ingests_and_requests_rebirth_on_gap() {
         assert_eq!(h, 0x33);
         let tlen = u16::from_be_bytes([body[0], body[1]]) as usize;
         log.push(String::from_utf8(body[2..2 + tlen].to_vec()).unwrap());
-        s.write_all(&[0x40, 0x02, body[2 + tlen], body[3 + tlen]]).unwrap();
+        s.write_all(&[0x40, 0x02, body[2 + tlen], body[3 + tlen]])
+            .unwrap();
         // SUBSCRIBE → SUBACK granting QoS 1.
         let (h, body) = read_pkt(&mut s).unwrap();
         assert_eq!(h, 0x82);
@@ -161,10 +199,12 @@ fn mqtt_host_ingests_and_requests_rebirth_on_gap() {
         assert!(lost.topic.contains("DDATA"));
         for (i, m) in msgs.iter().enumerate() {
             let pid = (i % 2 == 0).then_some(i as u16 + 1);
-            s.write_all(&publish_pkt(&m.topic, &m.payload, pid)).unwrap();
+            s.write_all(&publish_pkt(&m.topic, &m.payload, pid))
+                .unwrap();
         }
         // Collect what the host publishes (PUBACKs, pings, the NCMD) for a moment.
-        s.set_read_timeout(Some(Duration::from_millis(1500))).unwrap();
+        s.set_read_timeout(Some(Duration::from_millis(1500)))
+            .unwrap();
         while let Some((h, body)) = read_pkt(&mut s) {
             if h >> 4 == 3 {
                 let tlen = u16::from_be_bytes([body[0], body[1]]) as usize;
@@ -176,27 +216,74 @@ fn mqtt_host_ingests_and_requests_rebirth_on_gap() {
 
     let dir = common::tempdir();
     let policy = Policy::uniform(0.0, 0.0);
-    let spool = Spool::open(&dir.path().join("spool"), SpoolOptions { sync: SyncMode::Os, ..Default::default() }).unwrap();
-    let host = Host::new(HostConfig { reorder_timeout_ms: 0, ..Default::default() });
-    let mut collector = Collector::new(host, policy.clone(), Forwarder::new(spool, Backoff::default()), 100);
-    let mut archive = Archive::open(&dir.path().join("archive"), ArchiveOptions { sync: SyncMode::Os, policy, ..Default::default() }).unwrap();
+    let spool = Spool::open(
+        &dir.path().join("spool"),
+        SpoolOptions {
+            sync: SyncMode::Os,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let host = Host::new(HostConfig {
+        reorder_timeout_ms: 0,
+        ..Default::default()
+    });
+    let mut collector = Collector::new(
+        host,
+        policy.clone(),
+        Forwarder::new(spool, Backoff::default()),
+        100,
+    );
+    let mut archive = Archive::open(
+        &dir.path().join("archive"),
+        ArchiveOptions {
+            sync: SyncMode::Os,
+            policy,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let opts = MqttOptions {
         client_id: "tagvault-test".into(),
         keep_alive_s: 30,
-        will: Some(Will { topic: "spBv1.0/STATE/tv".into(), payload: b"{\"online\":false}".to_vec(), qos: 1, retain: true }),
+        will: Some(Will {
+            topic: "spBv1.0/STATE/tv".into(),
+            payload: b"{\"online\":false}".to_vec(),
+            qos: 1,
+            retain: true,
+        }),
         username: None,
         password: None,
     };
     let mut client = MqttClient::connect(&addr, &opts).unwrap();
-    let loop_opts = HostLoopOptions { filter: "spBv1.0/Plant1/#".into(), host_id: "tv".into(), tick: Duration::from_millis(50), max_messages: None };
+    let loop_opts = HostLoopOptions {
+        filter: "spBv1.0/Plant1/#".into(),
+        host_id: "tv".into(),
+        tick: Duration::from_millis(50),
+        max_messages: None,
+    };
     let handled = {
         let mut sink = ArchiveSink::new(&mut archive);
-        run_host(&mut client, &mut collector, &mut sink, &loop_opts, &AtomicBool::new(false)).unwrap()
+        run_host(
+            &mut client,
+            &mut collector,
+            &mut sink,
+            &loop_opts,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
     };
     let published = broker.join().unwrap();
     assert_eq!(published[0], "spBv1.0/STATE/tv");
-    assert!(published.iter().any(|t| t == "spBv1.0/Plant1/NCMD/Line1"), "rebirth requested: {published:?}");
+    assert!(
+        published.iter().any(|t| t == "spBv1.0/Plant1/NCMD/Line1"),
+        "rebirth requested: {published:?}"
+    );
     assert!(handled >= 10);
     assert_eq!(collector.host_stats().seq_gaps, 1);
-    assert_eq!(archive.tags().len(), 7, "uptime + 3 tank + 3 reactor metrics");
+    assert_eq!(
+        archive.tags().len(),
+        7,
+        "uptime + 3 tank + 3 reactor metrics"
+    );
 }

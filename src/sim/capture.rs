@@ -107,25 +107,45 @@ impl Scenario {
     pub fn generate(&self) -> (Vec<CaptureFrame>, ScenarioSummary) {
         let mut rng = Rng::new(self.seed ^ 0x00C0_FFEE);
         let mut nodes: Vec<EdgeNode> = (0..self.nodes)
-            .map(|i| EdgeNode::plant_cell(&self.group, &format!("Line{}", i + 1), self.seed.wrapping_mul(1000).wrapping_add(i as u64)))
+            .map(|i| {
+                EdgeNode::plant_cell(
+                    &self.group,
+                    &format!("Line{}", i + 1),
+                    self.seed.wrapping_mul(1000).wrapping_add(i as u64),
+                )
+            })
             .collect();
         let mut host = Host::new(self.host.clone());
         let mut frames = Vec::new();
         let mut summary = ScenarioSummary::default();
         let mut pending: Vec<(Timestamp, Outbound)> = Vec::new();
 
-        let deliver = |m: SpMessage, at: Timestamp, frames: &mut Vec<CaptureFrame>, pending: &mut Vec<(Timestamp, Outbound)>, host: &mut Host| {
+        let deliver = |m: SpMessage,
+                       at: Timestamp,
+                       frames: &mut Vec<CaptureFrame>,
+                       pending: &mut Vec<(Timestamp, Outbound)>,
+                       host: &mut Host| {
             let out = host.handle(&m.topic, &m.payload, at);
             for c in out.commands {
                 pending.push((at + self.latency_ms, c));
             }
-            frames.push(CaptureFrame { recv_ts: at, topic: m.topic, payload: m.payload });
+            frames.push(CaptureFrame {
+                recv_ts: at,
+                topic: m.topic,
+                payload: m.payload,
+            });
         };
 
         for node in &mut nodes {
             for m in node.birth(self.start) {
                 summary.published += 1;
-                deliver(m, self.start + self.latency_ms, &mut frames, &mut pending, &mut host);
+                deliver(
+                    m,
+                    self.start + self.latency_ms,
+                    &mut frames,
+                    &mut pending,
+                    &mut host,
+                );
             }
         }
         let steps = self.duration_s as i64 * 1000 / self.scan_ms;
@@ -149,7 +169,13 @@ impl Scenario {
                         summary.restarts += 1;
                         summary.published += 1;
                         let m = node.death(now);
-                        deliver(m, now + self.latency_ms, &mut frames, &mut pending, &mut host);
+                        deliver(
+                            m,
+                            now + self.latency_ms,
+                            &mut frames,
+                            &mut pending,
+                            &mut host,
+                        );
                     }
                     if now >= die && now < back {
                         node.scan(now, dt_s); // process keeps running; nothing is published
@@ -159,7 +185,13 @@ impl Scenario {
                         node.scan(now, dt_s);
                         for m in node.birth(now) {
                             summary.published += 1;
-                            deliver(m, now + self.latency_ms, &mut frames, &mut pending, &mut host);
+                            deliver(
+                                m,
+                                now + self.latency_ms,
+                                &mut frames,
+                                &mut pending,
+                                &mut host,
+                            );
                         }
                         continue;
                     }
@@ -171,12 +203,22 @@ impl Scenario {
                     summary.dropped += u64::from(lose);
                     !lose
                 });
-                if msgs.len() >= 2 && is_ddata(&msgs[0]) && is_ddata(&msgs[1]) && rng.chance(self.swap_prob) {
+                if msgs.len() >= 2
+                    && is_ddata(&msgs[0])
+                    && is_ddata(&msgs[1])
+                    && rng.chance(self.swap_prob)
+                {
                     msgs.swap(0, 1);
                     summary.swapped += 1;
                 }
                 for m in msgs {
-                    deliver(m, now + self.latency_ms, &mut frames, &mut pending, &mut host);
+                    deliver(
+                        m,
+                        now + self.latency_ms,
+                        &mut frames,
+                        &mut pending,
+                        &mut host,
+                    );
                 }
             }
             for c in host.tick(now).commands {
@@ -209,12 +251,18 @@ pub fn write_capture(path: &Path, frames: &[CaptureFrame]) -> Result<()> {
 pub fn read_capture(path: &Path) -> Result<Vec<CaptureFrame>> {
     let buf = std::fs::read(path)?;
     if buf.len() < MAGIC.len() || &buf[..MAGIC.len()] != MAGIC {
-        return Err(Error::Decode(format!("{} is not a tagvault capture", path.display())));
+        return Err(Error::Decode(format!(
+            "{} is not a tagvault capture",
+            path.display()
+        )));
     }
     let body = &buf[MAGIC.len()..];
     let scan = frame::scan(body);
     if scan.valid_len != body.len() {
-        return Err(Error::Corrupt(format!("capture {} is truncated or damaged", path.display())));
+        return Err(Error::Corrupt(format!(
+            "capture {} is truncated or damaged",
+            path.display()
+        )));
     }
     scan.frames
         .into_iter()
@@ -224,7 +272,11 @@ pub fn read_capture(path: &Path) -> Result<Vec<CaptureFrame>> {
             let topic = c.string()?;
             let len = c.uvarint()? as usize;
             let payload = c.bytes(len)?.to_vec();
-            Ok(CaptureFrame { recv_ts, topic, payload })
+            Ok(CaptureFrame {
+                recv_ts,
+                topic,
+                payload,
+            })
         })
         .collect()
 }
@@ -235,14 +287,23 @@ mod tests {
 
     #[test]
     fn scenario_is_deterministic_and_exercises_the_protocol() {
-        let sc = Scenario { duration_s: 1800, node_restart: Some((600, 30)), drop_prob: 0.002, swap_prob: 0.01, ..Default::default() };
+        let sc = Scenario {
+            duration_s: 1800,
+            node_restart: Some((600, 30)),
+            drop_prob: 0.002,
+            swap_prob: 0.01,
+            ..Default::default()
+        };
         let (a, sa) = sc.generate();
         let (b, sb) = sc.generate();
         assert_eq!(a, b);
         assert_eq!(sa, sb);
         assert!(sa.dropped > 0 && sa.swapped > 0, "{sa:?}");
         assert_eq!(sa.restarts, 1);
-        assert!(sa.rebirths >= 1, "lost messages must lead to honoured rebirths: {sa:?}");
+        assert!(
+            sa.rebirths >= 1,
+            "lost messages must lead to honoured rebirths: {sa:?}"
+        );
         assert_eq!(sa.delivered as usize, a.len());
 
         // Replaying the capture through a fresh host reproduces the same decisions.
@@ -258,7 +319,11 @@ mod tests {
 
     #[test]
     fn capture_file_roundtrip_and_damage() {
-        let sc = Scenario { duration_s: 60, node_restart: None, ..Default::default() };
+        let sc = Scenario {
+            duration_s: 60,
+            node_restart: None,
+            ..Default::default()
+        };
         let (frames, _) = sc.generate();
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("c.tvcap");

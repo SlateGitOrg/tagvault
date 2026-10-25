@@ -91,7 +91,11 @@ pub struct Point {
 impl Point {
     /// A good-quality point.
     pub fn good(ts: Timestamp, value: f64) -> Self {
-        Point { ts, value, quality: Quality::Good }
+        Point {
+            ts,
+            value,
+            quality: Quality::Good,
+        }
     }
 
     /// A point with explicit quality.

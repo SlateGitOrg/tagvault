@@ -27,7 +27,9 @@ fn raw(k: usize, i: i64) -> Point {
     let x = i as f64;
     let v = match k {
         0 => 50.0 + 20.0 * (x / 300.0).sin() + ((i * 7919) % 13) as f64 * 0.02,
-        1 => 80.0 + if (i / 500) % 2 == 0 { 5.0 } else { -5.0 } + ((i * 104_729) % 11) as f64 * 0.03,
+        1 => {
+            80.0 + if (i / 500) % 2 == 0 { 5.0 } else { -5.0 } + ((i * 104_729) % 11) as f64 * 0.03
+        }
         _ => (x / 50.0).cos() * 3.0 + ((i * 31) % 5) as f64 * 0.05,
     };
     Point::good(1_700_000_000_000 + i * 1000, v)
@@ -35,20 +37,37 @@ fn raw(k: usize, i: i64) -> Point {
 
 fn batch(start: i64, len: i64) -> Vec<Sample> {
     (start..start + len)
-        .flat_map(|i| TAGS.iter().enumerate().map(move |(k, t)| Sample { tag: t.to_string(), kind: ValueKind::Analog, point: raw(k, i) }))
+        .flat_map(|i| {
+            TAGS.iter().enumerate().map(move |(k, t)| Sample {
+                tag: t.to_string(),
+                kind: ValueKind::Analog,
+                point: raw(k, i),
+            })
+        })
         .collect()
 }
 
 fn opts(flush_points: usize, sync: SyncMode) -> ArchiveOptions {
-    ArchiveOptions { sync, flush_points, policy: Policy::uniform(0.0, COMP_DEV), ..Default::default() }
+    ArchiveOptions {
+        sync,
+        flush_points,
+        policy: Policy::uniform(0.0, COMP_DEV),
+        ..Default::default()
+    }
 }
 
+/// `(ts, value bits)` — bit-exact point identity.
+type Bits = (i64, u64);
+
 /// Everything observable about an archive: per tag, all stored points and the snapshot.
-fn fingerprint(a: &Archive) -> Vec<(String, Vec<(i64, u64)>, Option<(i64, u64)>)> {
+fn fingerprint(a: &Archive) -> Vec<(String, Vec<Bits>, Option<Bits>)> {
     a.tags()
         .into_iter()
         .map(|t| {
-            let pts = a.series(&t.name, i64::MIN / 4, i64::MAX / 4).unwrap().points;
+            let pts = a
+                .series(&t.name, i64::MIN / 4, i64::MAX / 4)
+                .unwrap()
+                .points;
             let pts = pts.into_iter().map(|p| (p.ts, p.value.to_bits())).collect();
             (t.name, pts, t.snapshot.map(|p| (p.ts, p.value.to_bits())))
         })
@@ -101,7 +120,9 @@ proptest! {
 /// Child-process body: write forever until killed. A no-op unless the env var is set.
 #[test]
 fn crash_child_writer() {
-    let Ok(dir) = std::env::var("TAGVAULT_CRASH_CHILD_DIR") else { return };
+    let Ok(dir) = std::env::var("TAGVAULT_CRASH_CHILD_DIR") else {
+        return;
+    };
     let mut a = Archive::open(Path::new(&dir), opts(400, SyncMode::Always)).unwrap();
     let mut i = 0i64;
     loop {
@@ -110,7 +131,8 @@ fn crash_child_writer() {
     }
 }
 
-/// Run the reference compressor over tag `k` up to and including timestamp `last_ts`.
+/// Run the reference compressor over tag `k` up to and including timestamp `last_ts`; return
+/// what a query sees (archived points followed by the open segment) and the snapshot.
 fn reference_for(k: usize, last_ts: i64) -> (Vec<Point>, Option<Point>) {
     let cfg = Policy::uniform(0.0, COMP_DEV).resolve(TAGS[k]).compression;
     let mut sdt = Sdt::new(cfg, ValueKind::Analog);
@@ -124,6 +146,7 @@ fn reference_for(k: usize, last_ts: i64) -> (Vec<Point>, Option<Point>) {
         sdt.offer(p, &mut out);
         i += 1;
     }
+    out.extend(sdt.pending());
     (out, sdt.snapshot())
 }
 
@@ -133,14 +156,21 @@ fn sigkill_during_writes_recovers_a_consistent_prefix() {
     for (round, delay_ms) in [60u64, 150, 260, 410, 650].into_iter().enumerate() {
         let dir = common::tempdir();
         let mut child = Command::new(&exe)
-            .args(["--exact", "crash_child_writer", "--nocapture", "--test-threads=1"])
+            .args([
+                "--exact",
+                "crash_child_writer",
+                "--nocapture",
+                "--test-threads=1",
+            ])
             .env("TAGVAULT_CRASH_CHILD_DIR", dir.path())
             .spawn()
             .expect("spawn child");
         // Wait until the child has demonstrably written something, then let it run a while.
         let wal = dir.path().join("wal.log");
         let t0 = Instant::now();
-        while fs::metadata(&wal).map(|m| m.len() < 512).unwrap_or(true) && t0.elapsed() < Duration::from_secs(20) {
+        while fs::metadata(&wal).map(|m| m.len() < 512).unwrap_or(true)
+            && t0.elapsed() < Duration::from_secs(20)
+        {
             std::thread::sleep(Duration::from_millis(5));
         }
         std::thread::sleep(Duration::from_millis(delay_ms));
@@ -153,15 +183,23 @@ fn sigkill_during_writes_recovers_a_consistent_prefix() {
         assert_eq!(tags.len(), TAGS.len(), "round {round}: all tags recovered");
         for info in tags {
             let k = TAGS.iter().position(|t| *t == info.name).unwrap();
-            let mut stored = a.series(&info.name, i64::MIN / 4, i64::MAX / 4).unwrap().points;
-            if info.snapshot.is_some() {
-                stored.pop();
-            }
-            let last_ts = info.snapshot.map(|p| p.ts).unwrap_or_else(|| stored.last().unwrap().ts);
+            let stored = a
+                .series(&info.name, i64::MIN / 4, i64::MAX / 4)
+                .unwrap()
+                .points;
+            let last_ts = stored.last().unwrap().ts;
             let (expected, expected_snapshot) = reference_for(k, last_ts);
-            assert_eq!(stored, expected, "round {round} tag {}: archive differs from uninterrupted run", info.name);
+            assert_eq!(
+                stored, expected,
+                "round {round} tag {}: archive differs from uninterrupted run",
+                info.name
+            );
             assert_eq!(info.snapshot, expected_snapshot);
         }
-        eprintln!("round {round}: recovered {:?}, {} segments", a.recovery(), a.stats().segments);
+        eprintln!(
+            "round {round}: recovered {:?}, {} segments",
+            a.recovery(),
+            a.stats().segments
+        );
     }
 }

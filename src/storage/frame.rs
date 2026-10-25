@@ -53,7 +53,10 @@ pub fn scan(buf: &[u8]) -> Scan {
         frames.push(start..start + len);
         pos = start + len;
     }
-    Scan { frames, valid_len: pos }
+    Scan {
+        frames,
+        valid_len: pos,
+    }
 }
 
 #[cfg(test)]

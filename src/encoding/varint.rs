@@ -58,7 +58,10 @@ impl<'a> Cursor<'a> {
     /// Take the next `n` bytes.
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.remaining() < n {
-            return Err(Error::Corrupt(format!("need {n} bytes, have {}", self.remaining())));
+            return Err(Error::Corrupt(format!(
+                "need {n} bytes, have {}",
+                self.remaining()
+            )));
         }
         let s = &self.buf[self.pos..self.pos + n];
         self.pos += n;

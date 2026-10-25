@@ -90,7 +90,9 @@ impl DataType {
         use DataType::*;
         match self {
             Float | Double => Some(ValueKind::Analog),
-            Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32 | UInt64 | DateTime => Some(ValueKind::Analog),
+            Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32 | UInt64 | DateTime => {
+                Some(ValueKind::Analog)
+            }
             Boolean => Some(ValueKind::Discrete),
             _ => None,
         }
@@ -133,21 +135,45 @@ mod tests {
     fn signed_ints_are_sign_extended_from_declared_width() {
         // -2 as Int8, zero-extended (0xFE) and sign-extended (0xFFFFFFFE) encodings.
         assert_eq!(DataType::Int8.to_f64(&Value::IntValue(0xFE)), Some(-2.0));
-        assert_eq!(DataType::Int8.to_f64(&Value::IntValue(0xFFFF_FFFE)), Some(-2.0));
-        assert_eq!(DataType::Int16.to_f64(&Value::IntValue(0xFFFF_8000)), Some(-32768.0));
-        assert_eq!(DataType::Int32.to_f64(&Value::IntValue(u32::MAX)), Some(-1.0));
-        assert_eq!(DataType::UInt32.to_f64(&Value::IntValue(u32::MAX)), Some(4294967295.0));
-        assert_eq!(DataType::Int64.to_f64(&Value::LongValue(u64::MAX)), Some(-1.0));
+        assert_eq!(
+            DataType::Int8.to_f64(&Value::IntValue(0xFFFF_FFFE)),
+            Some(-2.0)
+        );
+        assert_eq!(
+            DataType::Int16.to_f64(&Value::IntValue(0xFFFF_8000)),
+            Some(-32768.0)
+        );
+        assert_eq!(
+            DataType::Int32.to_f64(&Value::IntValue(u32::MAX)),
+            Some(-1.0)
+        );
+        assert_eq!(
+            DataType::UInt32.to_f64(&Value::IntValue(u32::MAX)),
+            Some(4294967295.0)
+        );
+        assert_eq!(
+            DataType::Int64.to_f64(&Value::LongValue(u64::MAX)),
+            Some(-1.0)
+        );
         assert_eq!(DataType::UInt64.to_f64(&Value::LongValue(7)), Some(7.0));
     }
 
     #[test]
     fn floats_bools_and_mismatches() {
         assert_eq!(DataType::Float.to_f64(&Value::FloatValue(1.5)), Some(1.5));
-        assert_eq!(DataType::Double.to_f64(&Value::DoubleValue(-2.25)), Some(-2.25));
-        assert_eq!(DataType::Boolean.to_f64(&Value::BooleanValue(true)), Some(1.0));
+        assert_eq!(
+            DataType::Double.to_f64(&Value::DoubleValue(-2.25)),
+            Some(-2.25)
+        );
+        assert_eq!(
+            DataType::Boolean.to_f64(&Value::BooleanValue(true)),
+            Some(1.0)
+        );
         assert_eq!(DataType::Float.to_f64(&Value::DoubleValue(1.0)), None);
-        assert_eq!(DataType::String.to_f64(&Value::StringValue("x".into())), None);
+        assert_eq!(
+            DataType::String.to_f64(&Value::StringValue("x".into())),
+            None
+        );
         assert_eq!(DataType::Boolean.value_kind(), Some(ValueKind::Discrete));
         assert_eq!(DataType::Template.value_kind(), None);
         assert_eq!(DataType::DateTime.value_kind(), Some(ValueKind::Analog));

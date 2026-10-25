@@ -24,7 +24,10 @@ pub struct ExceptionConfig {
 
 impl Default for ExceptionConfig {
     fn default() -> Self {
-        ExceptionConfig { dev: 0.0, max_ms: Some(600_000) }
+        ExceptionConfig {
+            dev: 0.0,
+            max_ms: Some(600_000),
+        }
     }
 }
 
@@ -41,7 +44,12 @@ pub struct ExceptionFilter {
 impl ExceptionFilter {
     /// New filter. Discrete tags ignore `dev` and report every change of value.
     pub fn new(cfg: ExceptionConfig, kind: ValueKind) -> Self {
-        ExceptionFilter { cfg, kind, last_reported: None, pending: None }
+        ExceptionFilter {
+            cfg,
+            kind,
+            last_reported: None,
+            pending: None,
+        }
     }
 
     /// Feed one point; reported points are appended to `out` in time order.
@@ -112,7 +120,10 @@ mod tests {
             .enumerate()
             .map(|(i, &v)| Point::good(i as i64 * 1000, v))
             .collect();
-        let cfg = ExceptionConfig { dev: 0.5, max_ms: None };
+        let cfg = ExceptionConfig {
+            dev: 0.5,
+            max_ms: None,
+        };
         let out = run(cfg, ValueKind::Analog, &pts);
         let ts: Vec<i64> = out.iter().map(|p| p.ts).collect();
         // first, the point before the jump, the jump, then the flushed tail.
@@ -122,7 +133,10 @@ mod tests {
     #[test]
     fn max_time_forces_report() {
         let pts: Vec<Point> = (0..10).map(|i| Point::good(i * 1000, 5.0)).collect();
-        let cfg = ExceptionConfig { dev: 1.0, max_ms: Some(3000) };
+        let cfg = ExceptionConfig {
+            dev: 1.0,
+            max_ms: Some(3000),
+        };
         let mut f = ExceptionFilter::new(cfg, ValueKind::Analog);
         let mut out = Vec::new();
         for p in pts {
@@ -142,7 +156,14 @@ mod tests {
             Point::good(3000, 1.0),
             Point::good(4000, 0.0),
         ];
-        let out = run(ExceptionConfig { dev: 5.0, max_ms: None }, ValueKind::Discrete, &pts);
+        let out = run(
+            ExceptionConfig {
+                dev: 5.0,
+                max_ms: None,
+            },
+            ValueKind::Discrete,
+            &pts,
+        );
         let ts: Vec<i64> = out.iter().map(|p| p.ts).collect();
         assert_eq!(ts, vec![0, 1000, 2000, 3000, 4000]);
     }

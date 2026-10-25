@@ -23,9 +23,16 @@ pub struct SpMessage {
 }
 
 #[derive(Debug, Clone)]
+struct Reactor {
+    temp: FirstOrder,
+    pressure: MeanReverting,
+    coolant: FirstOrder,
+}
+
+#[derive(Debug, Clone)]
 enum Model {
-    Tank(Tank),
-    Reactor { temp: FirstOrder, pressure: MeanReverting, coolant: FirstOrder },
+    Tank(Box<Tank>),
+    Reactor(Box<Reactor>),
 }
 
 #[derive(Debug, Clone)]
@@ -48,11 +55,28 @@ impl SimDevice {
     /// A buffer tank: `Level` (Double, %), `InletFlow` (Float, m³/h), `PumpRunning` (Boolean).
     pub fn tank(id: &str, seed: u64, first_alias: u64) -> Self {
         let metrics = vec![
-            MetricSpec { name: "Level", alias: first_alias, datatype: DataType::Double },
-            MetricSpec { name: "InletFlow", alias: first_alias + 1, datatype: DataType::Float },
-            MetricSpec { name: "PumpRunning", alias: first_alias + 2, datatype: DataType::Boolean },
+            MetricSpec {
+                name: "Level",
+                alias: first_alias,
+                datatype: DataType::Double,
+            },
+            MetricSpec {
+                name: "InletFlow",
+                alias: first_alias + 1,
+                datatype: DataType::Float,
+            },
+            MetricSpec {
+                name: "PumpRunning",
+                alias: first_alias + 2,
+                datatype: DataType::Boolean,
+            },
         ];
-        let mut d = SimDevice { id: id.into(), model: Model::Tank(Tank::new(seed)), metrics, last: Vec::new() };
+        let mut d = SimDevice {
+            id: id.into(),
+            model: Model::Tank(Box::new(Tank::new(seed))),
+            metrics,
+            last: Vec::new(),
+        };
         d.last = d.sample(1.0);
         d
     }
@@ -60,16 +84,33 @@ impl SimDevice {
     /// A reactor: `Temperature` (Double, °C), `Pressure` (Float, bar), `CoolantFlow` (Float, m³/h).
     pub fn reactor(id: &str, seed: u64, first_alias: u64) -> Self {
         let metrics = vec![
-            MetricSpec { name: "Temperature", alias: first_alias, datatype: DataType::Double },
-            MetricSpec { name: "Pressure", alias: first_alias + 1, datatype: DataType::Float },
-            MetricSpec { name: "CoolantFlow", alias: first_alias + 2, datatype: DataType::Float },
+            MetricSpec {
+                name: "Temperature",
+                alias: first_alias,
+                datatype: DataType::Double,
+            },
+            MetricSpec {
+                name: "Pressure",
+                alias: first_alias + 1,
+                datatype: DataType::Float,
+            },
+            MetricSpec {
+                name: "CoolantFlow",
+                alias: first_alias + 2,
+                datatype: DataType::Float,
+            },
         ];
-        let model = Model::Reactor {
+        let model = Model::Reactor(Box::new(Reactor {
             temp: FirstOrder::temperature(seed),
             pressure: MeanReverting::pressure(seed.wrapping_add(1)),
             coolant: FirstOrder::flow(seed.wrapping_add(2)),
+        }));
+        let mut d = SimDevice {
+            id: id.into(),
+            model,
+            metrics,
+            last: Vec::new(),
         };
-        let mut d = SimDevice { id: id.into(), model, metrics, last: Vec::new() };
         d.last = d.sample(1.0);
         d
     }
@@ -80,7 +121,11 @@ impl SimDevice {
                 let r = t.step(dt_s);
                 vec![r.level, r.inflow, f64::from(u8::from(r.pump_on))]
             }
-            Model::Reactor { temp, pressure, coolant } => vec![temp.step(dt_s), pressure.step(dt_s), coolant.step(dt_s)],
+            Model::Reactor(r) => vec![
+                r.temp.step(dt_s),
+                r.pressure.step(dt_s),
+                r.coolant.step(dt_s),
+            ],
         }
     }
 
@@ -142,7 +187,10 @@ impl EdgeNode {
 
     /// Standard plant cell: a tank and a reactor, aliases starting at 1 (node metric = alias 1).
     pub fn plant_cell(group: &str, edge: &str, seed: u64) -> Self {
-        let devices = vec![SimDevice::tank("Tank01", seed, 10), SimDevice::reactor("Reactor01", seed.wrapping_add(100), 20)];
+        let devices = vec![
+            SimDevice::tank("Tank01", seed, 10),
+            SimDevice::reactor("Reactor01", seed.wrapping_add(100), 20),
+        ];
         EdgeNode::new(group, edge, devices)
     }
 
@@ -205,14 +253,25 @@ impl EdgeNode {
             seq: Some(seq),
             ..Default::default()
         };
-        out.push(SpMessage { topic: Topic::node(MessageType::NBirth, &self.group, &self.edge).to_string(), payload: encode(nbirth) });
+        out.push(SpMessage {
+            topic: Topic::node(MessageType::NBirth, &self.group, &self.edge).to_string(),
+            payload: encode(nbirth),
+        });
         for di in 0..self.devices.len() {
             let seq = self.next_seq();
             let d = &self.devices[di];
-            let metrics = (0..d.metrics.len()).map(|i| d.metric(i, now, true)).collect();
-            let p = Payload { timestamp: Some(now as u64), metrics, seq: Some(seq), ..Default::default() };
+            let metrics = (0..d.metrics.len())
+                .map(|i| d.metric(i, now, true))
+                .collect();
+            let p = Payload {
+                timestamp: Some(now as u64),
+                metrics,
+                seq: Some(seq),
+                ..Default::default()
+            };
             out.push(SpMessage {
-                topic: Topic::device(MessageType::DBirth, &self.group, &self.edge, &d.id).to_string(),
+                topic: Topic::device(MessageType::DBirth, &self.group, &self.edge, &d.id)
+                    .to_string(),
                 payload: encode(p),
             });
         }
@@ -235,10 +294,18 @@ impl EdgeNode {
         for di in 0..self.devices.len() {
             let seq = self.next_seq();
             let d = &self.devices[di];
-            let metrics = (0..d.metrics.len()).map(|i| d.metric(i, now, false)).collect();
-            let p = Payload { timestamp: Some(now as u64), metrics, seq: Some(seq), ..Default::default() };
+            let metrics = (0..d.metrics.len())
+                .map(|i| d.metric(i, now, false))
+                .collect();
+            let p = Payload {
+                timestamp: Some(now as u64),
+                metrics,
+                seq: Some(seq),
+                ..Default::default()
+            };
             out.push(SpMessage {
-                topic: Topic::device(MessageType::DData, &self.group, &self.edge, &d.id).to_string(),
+                topic: Topic::device(MessageType::DData, &self.group, &self.edge, &d.id)
+                    .to_string(),
                 payload: encode(p),
             });
         }
@@ -256,7 +323,10 @@ impl EdgeNode {
                 seq: Some(seq),
                 ..Default::default()
             };
-            out.push(SpMessage { topic: Topic::node(MessageType::NData, &self.group, &self.edge).to_string(), payload: encode(p) });
+            out.push(SpMessage {
+                topic: Topic::node(MessageType::NData, &self.group, &self.edge).to_string(),
+                payload: encode(p),
+            });
         }
         out
     }
@@ -275,18 +345,26 @@ impl EdgeNode {
             ..Default::default()
         };
         self.bd_seq += 1;
-        SpMessage { topic: Topic::node(MessageType::NDeath, &self.group, &self.edge).to_string(), payload: encode(p) }
+        SpMessage {
+            topic: Topic::node(MessageType::NDeath, &self.group, &self.edge).to_string(),
+            payload: encode(p),
+        }
     }
 
     /// Handle a command addressed to this node. Returns true if it was a rebirth request.
     pub fn command(&mut self, topic: &str, payload: &[u8]) -> bool {
-        let Ok(t) = Topic::parse(topic) else { return false };
+        let Ok(t) = Topic::parse(topic) else {
+            return false;
+        };
         if t.kind != MessageType::NCmd || t.group != self.group || t.edge != self.edge {
             return false;
         }
-        let Ok(p) = Payload::decode(payload) else { return false };
+        let Ok(p) = Payload::decode(payload) else {
+            return false;
+        };
         let rebirth = p.metrics.iter().any(|m| {
-            m.name.as_deref() == Some("Node Control/Rebirth") && m.value == Some(metric::Value::BooleanValue(true))
+            m.name.as_deref() == Some("Node Control/Rebirth")
+                && m.value == Some(metric::Value::BooleanValue(true))
         });
         if rebirth && self.online {
             self.rebirth_pending = true;

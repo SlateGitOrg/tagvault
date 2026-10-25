@@ -127,14 +127,20 @@ impl WalRecord {
                     let name = c.string()?;
                     let sdt = Sdt::decode(&mut c)?;
                     let last_ts = if c.u8()? == 1 { Some(c.i64()?) } else { None };
-                    tags.push(TagCheckpoint { id, name, sdt, last_ts });
+                    tags.push(TagCheckpoint {
+                        id,
+                        name,
+                        sdt,
+                        last_ts,
+                    });
                 }
                 WalRecord::Checkpoint(Checkpoint { last_segment, tags })
             }
             REC_TAGDEF => {
                 let id = tag_id(c.uvarint()?)?;
                 let name = c.string()?;
-                let kind = ValueKind::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad value kind".into()))?;
+                let kind = ValueKind::from_code(c.u8()?)
+                    .ok_or_else(|| Error::Corrupt("bad value kind".into()))?;
                 WalRecord::TagDef { id, name, kind }
             }
             REC_POINTS => {
@@ -144,7 +150,8 @@ impl WalRecord {
                     let id = tag_id(c.uvarint()?)?;
                     let ts = c.i64()?;
                     let value = c.f64()?;
-                    let quality = Quality::from_code(c.u8()?).ok_or_else(|| Error::Corrupt("bad quality".into()))?;
+                    let quality = Quality::from_code(c.u8()?)
+                        .ok_or_else(|| Error::Corrupt("bad quality".into()))?;
                     pts.push((id, Point { ts, value, quality }));
                 }
                 WalRecord::Points(pts)
@@ -199,7 +206,13 @@ impl Wal {
             sync_dir(dir)?;
         }
         let file = OpenOptions::new().append(true).open(path)?;
-        Ok(Wal { path: path.to_path_buf(), file, pending: Vec::new(), len: framed.len() as u64, sync })
+        Ok(Wal {
+            path: path.to_path_buf(),
+            file,
+            pending: Vec::new(),
+            len: framed.len() as u64,
+            sync,
+        })
     }
 
     /// Open an existing log, truncating any torn tail, and return its records.
@@ -211,19 +224,38 @@ impl Wal {
             records.push(WalRecord::decode(&buf[r.clone()])?);
         }
         if !matches!(records.first(), Some(WalRecord::Checkpoint(_))) {
-            return Err(Error::Corrupt(format!("{} does not start with a checkpoint", path.display())));
+            return Err(Error::Corrupt(format!(
+                "{} does not start with a checkpoint",
+                path.display()
+            )));
         }
         let truncated = scan.torn_bytes(buf.len());
         let file = OpenOptions::new().write(true).open(path)?;
         if truncated > 0 {
-            log::warn!("WAL {}: truncating {truncated} byte torn tail", path.display());
+            log::warn!(
+                "WAL {}: truncating {truncated} byte torn tail",
+                path.display()
+            );
             file.set_len(scan.valid_len as u64)?;
             file.sync_all()?;
         }
         drop(file);
         let file = OpenOptions::new().append(true).open(path)?;
-        let rec = WalRecovery { records: records.len(), truncated_bytes: truncated };
-        Ok((Wal { path: path.to_path_buf(), file, pending: Vec::new(), len: scan.valid_len as u64, sync }, records, rec))
+        let rec = WalRecovery {
+            records: records.len(),
+            truncated_bytes: truncated,
+        };
+        Ok((
+            Wal {
+                path: path.to_path_buf(),
+                file,
+                pending: Vec::new(),
+                len: scan.valid_len as u64,
+                sync,
+            },
+            records,
+            rec,
+        ))
     }
 
     /// Buffer a record; it is not durable until [`Wal::commit`].
@@ -275,10 +307,22 @@ mod tests {
         vec![
             WalRecord::Checkpoint(Checkpoint {
                 last_segment: 4,
-                tags: vec![TagCheckpoint { id: 0, name: "a/b".into(), sdt, last_ts: Some(1) }],
+                tags: vec![TagCheckpoint {
+                    id: 0,
+                    name: "a/b".into(),
+                    sdt,
+                    last_ts: Some(1),
+                }],
             }),
-            WalRecord::TagDef { id: 1, name: "c".into(), kind: ValueKind::Discrete },
-            WalRecord::Points(vec![(0, Point::good(5, 1.5)), (1, Point::with_quality(6, f64::NAN, Quality::Bad))]),
+            WalRecord::TagDef {
+                id: 1,
+                name: "c".into(),
+                kind: ValueKind::Discrete,
+            },
+            WalRecord::Points(vec![
+                (0, Point::good(5, 1.5)),
+                (1, Point::with_quality(6, f64::NAN, Quality::Bad)),
+            ]),
         ]
     }
 
@@ -306,7 +350,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wal.log");
         let recs = sample_records();
-        let WalRecord::Checkpoint(cp) = &recs[0] else { unreachable!() };
+        let WalRecord::Checkpoint(cp) = &recs[0] else {
+            unreachable!()
+        };
         let mut wal = Wal::create(&path, cp, SyncMode::Always).unwrap();
         wal.append(&recs[1]);
         wal.append(&recs[2]);
@@ -324,7 +370,13 @@ mod tests {
         drop(f);
         let (wal, got, rec) = Wal::open(&path, SyncMode::Os).unwrap();
         assert_eq!(got.len(), 3);
-        assert_eq!(rec, WalRecovery { records: 3, truncated_bytes: 6 });
+        assert_eq!(
+            rec,
+            WalRecovery {
+                records: 3,
+                truncated_bytes: 6
+            }
+        );
         assert_eq!(wal.len(), full);
         assert_eq!(fs::metadata(&path).unwrap().len(), full);
     }
@@ -334,10 +386,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wal.log");
         let mut body = Vec::new();
-        WalRecord::TagDef { id: 0, name: "x".into(), kind: ValueKind::Analog }.encode(&mut body);
+        WalRecord::TagDef {
+            id: 0,
+            name: "x".into(),
+            kind: ValueKind::Analog,
+        }
+        .encode(&mut body);
         let mut framed = Vec::new();
         frame::encode(&body, &mut framed);
         fs::write(&path, framed).unwrap();
-        assert!(matches!(Wal::open(&path, SyncMode::Os), Err(Error::Corrupt(_))));
+        assert!(matches!(
+            Wal::open(&path, SyncMode::Os),
+            Err(Error::Corrupt(_))
+        ));
     }
 }

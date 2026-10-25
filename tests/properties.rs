@@ -22,44 +22,61 @@ fn signal(with_bad: bool) -> impl Strategy<Value = Vec<Point>> {
         for (dt, r, kind) in steps {
             ts += dt;
             match kind {
-                0..=4 => v += r * 50.0,        // step change
-                5..=60 => v += r * 0.5,        // drift
-                _ => v += r * 0.05,            // noise
+                0..=4 => v += r * 50.0, // step change
+                5..=60 => v += r * 0.5, // drift
+                _ => v += r * 0.05,     // noise
             }
-            let q = if with_bad && kind == 99 { Quality::Bad } else { Quality::Good };
-            out.push(Point::with_quality(ts, if q.is_good() { v } else { f64::NAN }, q));
+            let q = if with_bad && kind == 99 {
+                Quality::Bad
+            } else {
+                Quality::Good
+            };
+            out.push(Point::with_quality(
+                ts,
+                if q.is_good() { v } else { f64::NAN },
+                q,
+            ));
         }
         out
     })
 }
 
 fn lin(points: Vec<Point>) -> Series {
-    Series { kind: ValueKind::Analog, points }
+    Series {
+        kind: ValueKind::Analog,
+        points,
+    }
 }
 
 fn tol(dev: f64, pts: &[Point]) -> f64 {
-    let scale = pts.iter().filter(|p| p.value.is_finite()).map(|p| p.value.abs()).fold(1.0, f64::max);
+    let scale = pts
+        .iter()
+        .filter(|p| p.value.is_finite())
+        .map(|p| p.value.abs())
+        .fold(1.0, f64::max);
     dev + 1e-9 * scale
 }
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
 
-    /// Strict SDT: linear reconstruction is within `dev` of every received good point.
+    /// Strict and lookback SDT: linear reconstruction is within `dev` of every received good point.
     #[test]
     fn sdt_reconstruction_error_never_exceeds_deviation(
         pts in signal(true),
         dev in 0.0f64..5.0,
         max_ms in prop::option::of(1_000i64..200_000),
+        lookback in any::<bool>(),
     ) {
-        let arch = compress_series(SdtConfig { dev, max_ms, mode: SdtMode::Strict }, ValueKind::Analog, &pts);
+        let mode = if lookback { SdtMode::Lookback } else { SdtMode::Strict };
+        let arch = compress_series(SdtConfig { dev, max_ms, mode }, ValueKind::Analog, &pts);
         let s = lin(arch.clone());
         prop_assert!(arch.len() <= pts.len());
         for p in pts.iter().filter(|p| p.quality.is_good()) {
             let v = query::value_at(&s, p.ts);
             prop_assert!(v.is_some(), "undefined at {}", p.ts);
             let err = (v.unwrap() - p.value).abs();
-            prop_assert!(err <= tol(dev, &pts), "error {err} > dev {dev} at {}", p.ts);
+            prop_assert!(err <= tol(dev, &pts), "{mode:?}: error {err} > dev {dev} at {}", p.ts);
         }
         // Archived values are original measurements, never synthesized.
         for a in &arch {
@@ -88,14 +105,15 @@ proptest! {
 
     /// Exception at the collector then SDT at the archive: within `2·exc + comp`.
     #[test]
-    fn combined_pipeline_bound(pts in signal(false), exc in 0.0f64..1.0, comp in 0.0f64..2.0) {
+    fn combined_pipeline_bound(pts in signal(false), exc in 0.0f64..1.0, comp in 0.0f64..2.0, lookback in any::<bool>()) {
+        let mode = if lookback { SdtMode::Lookback } else { SdtMode::Strict };
         let mut f = ExceptionFilter::new(ExceptionConfig { dev: exc, max_ms: Some(60_000) }, ValueKind::Analog);
         let mut rep = Vec::new();
         for &p in &pts {
             f.offer(p, &mut rep);
         }
         rep.extend(f.flush());
-        let arch = compress_series(SdtConfig { dev: comp, max_ms: Some(600_000), mode: SdtMode::Strict }, ValueKind::Analog, &rep);
+        let arch = compress_series(SdtConfig { dev: comp, max_ms: Some(600_000), mode }, ValueKind::Analog, &rep);
         let s = lin(arch);
         for p in &pts {
             let v = query::value_at(&s, p.ts).unwrap();

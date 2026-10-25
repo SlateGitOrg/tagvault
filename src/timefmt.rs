@@ -82,11 +82,26 @@ pub fn parse_time(s: &str, now: Timestamp) -> Result<Timestamp> {
     }
     // YYYY-MM-DDTHH:MM:SS[.fff]Z
     let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || (b[10] != b'T' && b[10] != b' ') || b[13] != b':' || b[16] != b':' || !s.ends_with('Z') {
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || (b[10] != b'T' && b[10] != b' ')
+        || b[13] != b':'
+        || b[16] != b':'
+        || !s.ends_with('Z')
+    {
         return Err(bad());
     }
-    let num = |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<i64>().ok()).ok_or_else(bad);
-    let (y, mo, d, h, mi, se) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
+    let num =
+        |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<i64>().ok()).ok_or_else(bad);
+    let (y, mo, d, h, mi, se) = (
+        num(0..4)?,
+        num(5..7)?,
+        num(8..10)?,
+        num(11..13)?,
+        num(14..16)?,
+        num(17..19)?,
+    );
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return Err(bad());
     }
@@ -98,7 +113,9 @@ pub fn parse_time(s: &str, now: Timestamp) -> Result<Timestamp> {
         if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|c| c.is_ascii_digit()) {
             return Err(bad());
         }
-        format!("{digits:0<3}")[..3].parse::<i64>().map_err(|_| bad())?
+        format!("{digits:0<3}")[..3]
+            .parse::<i64>()
+            .map_err(|_| bad())?
     };
     Ok(days_from_civil(y, mo, d) * 86_400_000 + h * 3_600_000 + mi * 60_000 + se * 1000 + ms)
 }
@@ -118,10 +135,25 @@ mod tests {
     #[test]
     fn rfc3339_roundtrip_and_known_values() {
         assert_eq!(parse_time("1970-01-01T00:00:00Z", 0).unwrap(), 0);
-        assert_eq!(parse_time("2026-01-05T00:00:00Z", 0).unwrap(), 1_767_571_200_000);
-        assert_eq!(parse_time("2024-02-29T12:34:56.789Z", 0).unwrap(), 1_709_210_096_789);
-        assert_eq!(parse_time("2024-02-29T12:34:56.7Z", 0).unwrap(), 1_709_210_096_700);
-        for ts in [0i64, 1_767_571_200_000, 1_709_210_096_789, -86_400_001, 4_102_444_800_000] {
+        assert_eq!(
+            parse_time("2026-01-05T00:00:00Z", 0).unwrap(),
+            1_767_571_200_000
+        );
+        assert_eq!(
+            parse_time("2024-02-29T12:34:56.789Z", 0).unwrap(),
+            1_709_210_096_789
+        );
+        assert_eq!(
+            parse_time("2024-02-29T12:34:56.7Z", 0).unwrap(),
+            1_709_210_096_700
+        );
+        for ts in [
+            0i64,
+            1_767_571_200_000,
+            1_709_210_096_789,
+            -86_400_001,
+            4_102_444_800_000,
+        ] {
             assert_eq!(parse_time(&format_time(ts), 0).unwrap(), ts);
         }
         assert_eq!(format_time(1_767_571_200_000), "2026-01-05T00:00:00.000Z");
@@ -133,7 +165,14 @@ mod tests {
         assert_eq!(parse_time("*-2s", 5000).unwrap(), 3000);
         assert_eq!(parse_time("*+1m", 0).unwrap(), 60_000);
         assert_eq!(parse_time("12345", 0).unwrap(), 12345);
-        for bad in ["*x1h", "2026-13-01T00:00:00Z", "2026-01-01 00:00:00", "2026-01-01T00:00:00.Z", "yesterday", "*-1y"] {
+        for bad in [
+            "*x1h",
+            "2026-13-01T00:00:00Z",
+            "2026-01-01 00:00:00",
+            "2026-01-01T00:00:00.Z",
+            "yesterday",
+            "*-1y",
+        ] {
             assert!(parse_time(bad, 0).is_err(), "{bad}");
         }
         assert_eq!(parse_duration("250ms").unwrap(), 250);

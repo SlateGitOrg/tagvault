@@ -74,21 +74,33 @@ impl Collector {
     fn filter_sample(&mut self, s: Sample) {
         self.stats.samples_in += 1;
         let policy = &self.policy;
-        let tf = self.filters.entry(s.tag.clone()).or_insert_with(|| TagFilter {
-            kind: s.kind,
-            filter: ExceptionFilter::new(policy.resolve(&s.tag).exception, s.kind),
-        });
+        let tf = self
+            .filters
+            .entry(s.tag.clone())
+            .or_insert_with(|| TagFilter {
+                kind: s.kind,
+                filter: ExceptionFilter::new(policy.resolve(&s.tag).exception, s.kind),
+            });
         let mut out: Vec<Point> = Vec::with_capacity(2);
         tf.filter.offer(s.point, &mut out);
         let kind = tf.kind;
         for p in out {
             self.stats.samples_reported += 1;
-            self.pending.push(Sample { tag: s.tag.clone(), kind, point: p });
+            self.pending.push(Sample {
+                tag: s.tag.clone(),
+                kind,
+                point: p,
+            });
         }
     }
 
     /// Handle one MQTT message; returns commands (rebirth requests) to publish.
-    pub fn on_message(&mut self, topic: &str, payload: &[u8], now: Timestamp) -> Result<Vec<Outbound>> {
+    pub fn on_message(
+        &mut self,
+        topic: &str,
+        payload: &[u8],
+        now: Timestamp,
+    ) -> Result<Vec<Outbound>> {
         let out = self.host.handle(topic, payload, now);
         if self.keep_events {
             self.events.extend(out.events);
@@ -131,7 +143,13 @@ impl Collector {
         let mut held: Vec<Sample> = self
             .filters
             .iter_mut()
-            .filter_map(|(name, tf)| tf.filter.flush().map(|p| Sample { tag: name.clone(), kind: tf.kind, point: p }))
+            .filter_map(|(name, tf)| {
+                tf.filter.flush().map(|p| Sample {
+                    tag: name.clone(),
+                    kind: tf.kind,
+                    point: p,
+                })
+            })
             .collect();
         held.sort_by(|a, b| a.tag.cmp(&b.tag));
         self.stats.samples_reported += held.len() as u64;
@@ -140,7 +158,12 @@ impl Collector {
     }
 
     /// Try to forward spooled batches.
-    pub fn pump(&mut self, sink: &mut dyn Sink, now: Timestamp, max_batches: usize) -> Result<PumpReport> {
+    pub fn pump(
+        &mut self,
+        sink: &mut dyn Sink,
+        now: Timestamp,
+        max_batches: usize,
+    ) -> Result<PumpReport> {
         self.forwarder.pump(sink, now, max_batches)
     }
 
@@ -195,7 +218,9 @@ pub fn replay(
             report.commands += collector.tick(now)?.len() as u64;
             let r = collector.pump(sink, now, 64)?;
             report.link_failures += u64::from(r.link_failed);
-            report.max_backlog = report.max_backlog.max(collector.forwarder().spool().stats().pending_records);
+            report.max_backlog = report
+                .max_backlog
+                .max(collector.forwarder().spool().stats().pending_records);
             next_tick = Some(now + tick_ms);
         }
     }
@@ -207,7 +232,11 @@ pub fn replay(
         now += tick_ms;
         let r = collector.pump(sink, now, 256)?;
         report.link_failures += u64::from(r.link_failed);
-        idle = if r.delivered + r.dead_lettered > 0 { 0 } else { idle + 1 };
+        idle = if r.delivered + r.dead_lettered > 0 {
+            0
+        } else {
+            idle + 1
+        };
     }
     report.left_in_spool = collector.forwarder().spool().stats().pending_records;
     Ok(report)
