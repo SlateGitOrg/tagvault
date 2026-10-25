@@ -62,7 +62,8 @@ fn seg_value(kind: ValueKind, a: &Point, b: &Point, t: Timestamp) -> f64 {
     if kind == ValueKind::Discrete || !defined(b) || t <= a.ts {
         return a.value;
     }
-    a.value + (b.value - a.value) * ((t - a.ts) as f64 / (b.ts - a.ts) as f64)
+    // i128 differences: stored timestamps may lie further apart than i64::MAX.
+    a.value + (b.value - a.value) * ((t as i128 - a.ts as i128) as f64 / (b.ts as i128 - a.ts as i128) as f64)
 }
 
 /// Stored points with `start <= ts <= end`, at most `limit`.
@@ -91,11 +92,13 @@ fn check_grid(start: Timestamp, end: Timestamp, step: i64) -> Result<u64> {
     if end < start {
         return Err(Error::InvalidInput("end must not be before start".into()));
     }
-    let rows = ((end - start) / step) as u64 + 1;
-    if rows > MAX_ROWS {
+    // i128: `end - start` overflows i64 for spans wider than i64::MAX (e.g. MIN..MAX), and a
+    // wrapped span would slip under the row cap.
+    let rows = ((end as i128 - start as i128) / step as i128) as u128 + 1;
+    if rows > MAX_ROWS as u128 {
         return Err(Error::InvalidInput(format!("query would return {rows} rows (max {MAX_ROWS})")));
     }
-    Ok(rows)
+    Ok(rows as u64)
 }
 
 /// Values at `start, start+step, … <= end`.
@@ -123,7 +126,11 @@ pub fn interpolated(series: &Series, start: Timestamp, end: Timestamp, step: i64
             }
         };
         out.push(InterpRow { ts: t, value });
-        t += step;
+        // The step past the last sample can exceed i64::MAX when `end` is near it.
+        match t.checked_add(step) {
+            Some(next) => t = next,
+            None => break,
+        }
     }
     Ok(out)
 }
@@ -141,7 +148,7 @@ pub fn aggregate(series: &Series, start: Timestamp, end: Timestamp, interval: i6
     // First point that could start a segment overlapping the current interval.
     let mut seg = 0usize;
     while a < end {
-        let b = (a + interval).min(end);
+        let b = a.checked_add(interval).map_or(end, |x| x.min(end));
         while seg + 1 < pts.len() && pts[seg + 1].ts <= a {
             seg += 1;
         }
@@ -217,6 +224,33 @@ mod tests {
         assert!(interpolated(&s, 0, 10, 0).is_err());
         assert!(interpolated(&s, 10, 0, 1).is_err());
         assert!(interpolated(&s, 0, i64::MAX / 2, 1).is_err());
+    }
+
+    #[test]
+    fn extreme_ranges_are_rejected_or_bounded_not_wrapped() {
+        let s = series(ValueKind::Analog, &[(0, 0.0), (10, 10.0)]);
+        // The full i64 span used to wrap to -1, pass the row cap and loop ~2^64 times.
+        assert!(interpolated(&s, i64::MIN, i64::MAX, 1).is_err());
+        assert!(aggregate(&s, i64::MIN, i64::MAX, 1).is_err());
+        // A coarse grid over the full span is small and legal; it stops before `t + step` overflows.
+        let rows = interpolated(&s, i64::MIN, i64::MAX, i64::MAX).unwrap();
+        assert_eq!(rows.iter().map(|r| r.ts).collect::<Vec<_>>(), vec![i64::MIN, -1, i64::MAX - 1]);
+        // Grids that end next to i64::MAX terminate instead of overflowing `t + step`.
+        let rows = interpolated(&s, i64::MAX - 10, i64::MAX, 4).unwrap();
+        assert_eq!(rows.iter().map(|r| r.ts).collect::<Vec<_>>(), vec![i64::MAX - 10, i64::MAX - 6, i64::MAX - 2]);
+        let rows = interpolated(&s, i64::MIN, i64::MIN + 2, 1).unwrap();
+        assert_eq!(rows.len(), 3);
+        let agg = aggregate(&s, i64::MAX - 10, i64::MAX, 4).unwrap();
+        assert_eq!(
+            agg.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
+            vec![(i64::MAX - 10, i64::MAX - 6), (i64::MAX - 6, i64::MAX - 2), (i64::MAX - 2, i64::MAX)]
+        );
+        // Interval wider than the remaining headroom: one clipped interval.
+        let agg = aggregate(&s, i64::MAX - 10, i64::MAX, i64::MAX).unwrap();
+        assert_eq!((agg.len(), agg[0].end), (1, i64::MAX));
+        // Points further apart than i64::MAX still interpolate.
+        let wide = series(ValueKind::Analog, &[(i64::MIN, 0.0), (i64::MAX, 1.0)]);
+        assert_eq!(value_at(&wide, -1), Some(0.5));
     }
 
     #[test]

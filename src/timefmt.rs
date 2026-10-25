@@ -70,12 +70,14 @@ pub fn parse_time(s: &str, now: Timestamp) -> Result<Timestamp> {
         if rest.is_empty() {
             return Ok(now);
         }
-        let (sign, dur) = match rest.split_at(1) {
-            ("-", d) => (-1, d),
-            ("+", d) => (1, d),
+        let (sub, dur) = match rest.split_at(1) {
+            ("-", d) => (true, d),
+            ("+", d) => (false, d),
             _ => return Err(bad()),
         };
-        return Ok(now + sign * parse_duration(dur)?);
+        let dur = parse_duration(dur)?;
+        let t = if sub { now.checked_sub(dur) } else { now.checked_add(dur) };
+        return t.ok_or_else(bad);
     }
     if let Ok(ms) = s.parse::<i64>() {
         return Ok(ms);
@@ -146,6 +148,10 @@ mod tests {
         assert_eq!(parse_duration("15").unwrap(), 15);
         assert!(parse_duration("h").is_err());
         assert!(parse_duration("99999999999999999d").is_err());
+        // Relative times that leave the i64 range are errors, not wrapped values.
+        assert!(parse_time("*+9223372036854775807", 1).is_err());
+        assert!(parse_time("*-9223372036854775807", -2).is_err());
+        assert_eq!(parse_time("*-9223372036854775807", 0).unwrap(), -i64::MAX);
         assert!(now_ms() > 1_700_000_000_000);
     }
 }

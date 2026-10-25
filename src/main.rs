@@ -374,8 +374,9 @@ fn parse_outages(specs: &[String], origin: i64) -> Result<Vec<(i64, i64)>> {
             let (a, d) = s
                 .split_once(':')
                 .ok_or_else(|| Error::InvalidInput(format!("--outage expects START:DURATION, got {s}")))?;
-            let start = origin + parse_duration(a)?;
-            Ok((start, start + parse_duration(d)?))
+            let overflow = || Error::InvalidInput(format!("--outage {s} is out of range"));
+            let start = origin.checked_add(parse_duration(a)?).ok_or_else(overflow)?;
+            Ok((start, start.checked_add(parse_duration(d)?).ok_or_else(overflow)?))
         })
         .collect()
 }

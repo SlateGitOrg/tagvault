@@ -87,6 +87,14 @@ fn http_api_ingest_and_queries() {
     assert_eq!(http_get(&addr, "/api/v1/raw?tag=nope&start=0&end=1").0, 404);
     assert_eq!(http_get(&addr, "/api/v1/raw?tag=x").0, 400);
     assert_eq!(http_get(&addr, &format!("/api/v1/interpolated?tag={tag}&start=0&end=1&step=0")).0, 400);
+    // Spans wider than i64 used to wrap past the row cap and loop for ever (review fix round 1).
+    let (min, max) = (i64::MIN, i64::MAX);
+    assert_eq!(http_get(&addr, &format!("/api/v1/interpolated?tag={tag}&start={min}&end={max}&step=1ms")).0, 400);
+    assert_eq!(http_get(&addr, &format!("/api/v1/aggregate?tag={tag}&start={min}&end={max}&interval=1ms")).0, 400);
+    assert_eq!(
+        http_get(&addr, &format!("/api/v1/interpolated?tag={tag}&start=0&end=*%2B9223372036854775807&step=1s")).0,
+        400
+    );
     assert_eq!(http_get(&addr, "/nope").0, 404);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     handle.join().unwrap();

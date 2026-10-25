@@ -113,6 +113,27 @@ fn simulate_ingest_query_verify() {
     assert!(!bad.status.success());
     let bad = tv(&["simulate", "--out", p(&cap), "--restart", "bad"]);
     assert!(!bad.status.success());
+    // A span wider than i64 is rejected at once instead of wrapping past the row cap (fix round 1).
+    let started = std::time::Instant::now();
+    let bad = tv(&[
+        "query",
+        "interp",
+        "--data",
+        p(&data),
+        "--tag",
+        tag,
+        "--start=-9223372036854775808",
+        "--end",
+        "9223372036854775807",
+        "--step",
+        "1ms",
+    ]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("rows (max"), "{}", String::from_utf8_lossy(&bad.stderr));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let bad = tv(&["ingest", "--capture", p(&cap), "--data", p(&data), "--outage", "9223372036854775807:1s"]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("out of range"), "{}", String::from_utf8_lossy(&bad.stderr));
 }
 
 #[test]
