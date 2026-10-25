@@ -121,3 +121,55 @@ pub mod wire {
 pub fn tempdir() -> tempfile::TempDir {
     tempfile::Builder::new().prefix("tagvault-test-").tempdir().expect("tempdir")
 }
+
+/// Spawns short-lived child processes (`true`) on a background thread until dropped, the way a
+/// concurrently running test that drives a child process does.
+pub struct ChildChurn {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    spawned: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ChildChurn {
+    pub fn start() -> ChildChurn {
+        use std::sync::atomic::Ordering;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let spawned = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (s, n) = (stop.clone(), spawned.clone());
+        let thread = std::thread::spawn(move || {
+            while !s.load(Ordering::Relaxed) {
+                std::process::Command::new("true").status().expect("spawn `true`");
+                n.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        ChildChurn { stop, spawned, thread: Some(thread) }
+    }
+
+    /// Children spawned so far.
+    pub fn spawned(&self) -> usize {
+        self.spawned.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Drop for ChildChurn {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Proptest settings for integration tests. Failing seeds are saved next to the test source as
+/// `tests/<file>.proptest-regressions`. Proptest's default, `SourceParallel`, looks for a
+/// `lib.rs`/`main.rs` beside the test file, which integration tests do not have, so on a failure
+/// it only printed "FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs".
+pub fn proptest_config(cases: u32) -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        cases,
+        failure_persistence: Some(Box::new(proptest::test_runner::FileFailurePersistence::WithSource(
+            "proptest-regressions",
+        ))),
+        ..proptest::test_runner::Config::default()
+    }
+}

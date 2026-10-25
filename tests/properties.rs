@@ -1,5 +1,7 @@
 //! Property tests for the core guarantees.
 
+mod common;
+
 use proptest::prelude::*;
 use std::collections::VecDeque;
 use tagvault::compress::deadband::{ExceptionConfig, ExceptionFilter};
@@ -43,7 +45,7 @@ fn tol(dev: f64, pts: &[Point]) -> f64 {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+    #![proptest_config(common::proptest_config(512))]
 
     /// Strict and lookback SDT: linear reconstruction is within `dev` of every received good point.
     #[test]
@@ -175,7 +177,7 @@ enum Op {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+    #![proptest_config(common::proptest_config(64))]
 
     /// The spool behaves like a FIFO queue across restarts (no overflow).
     #[test]

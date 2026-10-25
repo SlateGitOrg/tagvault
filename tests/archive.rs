@@ -171,6 +171,32 @@ fn second_open_of_the_same_directory_is_refused() {
     Archive::open(dir.path(), opts(100)).unwrap();
 }
 
+/// Regression: dropping an archive while another thread was spawning a child process left the
+/// directory lock held by the child's transient descriptor copy, so the immediate reopen that a
+/// crash-recovery test performs failed with "in use by another tagvault process".
+#[test]
+fn reopen_after_drop_is_not_refused_while_children_are_spawned() {
+    let dir = common::tempdir();
+    let churn = common::ChildChurn::start();
+    let t0 = std::time::Instant::now();
+    let (mut cycles, mut refused) = (0u64, Vec::new());
+    while churn.spawned() < 100 && t0.elapsed() < std::time::Duration::from_secs(60) {
+        match Archive::open(dir.path(), opts(100)) {
+            Ok(a) => drop(a),
+            Err(e) => refused.push(e.to_string()),
+        }
+        cycles += 1;
+    }
+    let spawned = churn.spawned();
+    drop(churn);
+    assert!(
+        refused.is_empty(),
+        "{} of {cycles} reopens refused during {spawned} spawns: {:?}",
+        refused.len(),
+        refused.first()
+    );
+}
+
 #[test]
 fn policy_changes_apply_on_open_but_read_only_opens_keep_settings() {
     let dir = common::tempdir();

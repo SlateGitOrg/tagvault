@@ -107,7 +107,8 @@ pub struct Spool {
     tail: File,
     cursor: Position,
     stats: SpoolStats,
-    _lock: File,
+    /// Declared last so it is dropped after every other open file of the directory.
+    _lock: crate::storage::DirLock,
 }
 
 fn seg_name(id: u64) -> String {

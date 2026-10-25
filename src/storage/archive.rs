@@ -158,7 +158,8 @@ pub struct Archive {
     stats: ArchiveStats,
     poisoned: bool,
     recovery: RecoveryReport,
-    _lock: fs::File,
+    /// Declared last so it is dropped after every other open file of the directory.
+    _lock: super::DirLock,
 }
 
 impl Archive {

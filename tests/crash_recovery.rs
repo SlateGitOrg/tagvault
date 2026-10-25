@@ -65,7 +65,7 @@ fn fingerprint(a: &Archive) -> Vec<(String, Vec<Bits>, Option<Bits>)> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
+    #![proptest_config(common::proptest_config(48))]
 
     #[test]
     fn torn_last_commit_recovers_to_committed_prefix(
@@ -114,10 +114,23 @@ fn crash_child_writer() {
         return;
     };
     let mut a = Archive::open(Path::new(&dir), opts(400, SyncMode::Always)).unwrap();
+    // Never outlive the test that spawned us: if it died before killing us, stop writing.
+    let parent = std::os::unix::process::parent_id();
     let mut i = 0i64;
-    loop {
+    while std::os::unix::process::parent_id() == parent {
         a.write(&batch(i, 25)).unwrap();
         i += 25;
+    }
+}
+
+/// Kills and reaps the crash child when dropped, so a failing assertion in the parent test can
+/// not leave a writer running.
+struct ChildGuard(std::process::Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -145,11 +158,13 @@ fn sigkill_during_writes_recovers_a_consistent_prefix() {
     let exe = std::env::current_exe().unwrap();
     for (round, delay_ms) in [60u64, 150, 260, 410, 650].into_iter().enumerate() {
         let dir = common::tempdir();
-        let mut child = Command::new(&exe)
-            .args(["--exact", "crash_child_writer", "--nocapture", "--test-threads=1"])
-            .env("TAGVAULT_CRASH_CHILD_DIR", dir.path())
-            .spawn()
-            .expect("spawn child");
+        let mut child = ChildGuard(
+            Command::new(&exe)
+                .args(["--exact", "crash_child_writer", "--nocapture", "--test-threads=1"])
+                .env("TAGVAULT_CRASH_CHILD_DIR", dir.path())
+                .spawn()
+                .expect("spawn child"),
+        );
         // Wait until the child has demonstrably written something, then let it run a while.
         let wal = dir.path().join("wal.log");
         let t0 = Instant::now();
@@ -157,8 +172,8 @@ fn sigkill_during_writes_recovers_a_consistent_prefix() {
             std::thread::sleep(Duration::from_millis(5));
         }
         std::thread::sleep(Duration::from_millis(delay_ms));
-        child.kill().expect("SIGKILL child");
-        child.wait().unwrap();
+        child.0.kill().expect("SIGKILL child");
+        child.0.wait().unwrap();
 
         let a = Archive::open(dir.path(), opts(400, SyncMode::Always)).unwrap();
         a.verify().unwrap();
