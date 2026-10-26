@@ -113,7 +113,7 @@ fn simulate_ingest_query_verify() {
     assert!(!bad.status.success());
     let bad = tv(&["simulate", "--out", p(&cap), "--restart", "bad"]);
     assert!(!bad.status.success());
-    // A span wider than i64 is rejected at once instead of wrapping past the row cap (fix round 1).
+    // A span wider than i64 is rejected at once instead of wrapping past the row cap.
     let started = std::time::Instant::now();
     let bad = tv(&[
         "query",
